@@ -38,16 +38,16 @@ Fill out values in the .env and you're good to go!
 ![image](https://cdn.pengucc.com/images/projects/jellyfin-bot/role-required.png)
 
 ***User Commands***
-- !createaccount <username> <password> - Create your Jellyfin account
-- !recoveraccount <username> <newpassword> - Reset your password
-- !deleteaccount <username> - Delete your Jellyfin account
+- `!createaccount` <username> <password> - Create your Jellyfin account
+- `!recoveraccount` <username> <newpassword> - Reset your password
+- `!deleteaccount` <username> - Delete your Jellyfin account
 
 ***Admin Commands***
-- !syncaccounts - Remove Jellyfin accounts from users without roles
-- !searchaccount <jellyfin_username> - Find linked Discord user
-- !searchdiscord @user - Find linked Jellyfin account
-- !scanlibraries - Scan all Jellyfin libraries
-- !assignaccount <jellyfin_username> @user - Manually link accounts
+- `!cleanup` - Remove Jellyfin accounts from users without roles
+- `!searchaccount` <jellyfin_username> - Find linked Discord user
+- `!searchdiscord` @user - Find linked Jellyfin account
+- `!scanlibraries` - Scan all Jellyfin libraries
+- `!assignaccount` <jellyfin_username> @user - Manually link accounts
 
 ***Admin Bot Commands***
-- !setprefix - Change the bots command prefix
+- `!setprefix` - Change the bots command prefix

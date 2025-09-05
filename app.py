@@ -47,6 +47,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 # DATABASE SETUP
 # =====================
 def init_db():
+    # Existing DB creation
     conn = mysql.connector.connect(
         host=DB_HOST, user=DB_USER, password=DB_PASSWORD
     )
@@ -64,6 +65,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS accounts (
             discord_id BIGINT PRIMARY KEY,
             jellyfin_username VARCHAR(255) NOT NULL
+        )
+    """)
+    # New table for metadata
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bot_metadata (
+            key_name VARCHAR(255) PRIMARY KEY,
+            value VARCHAR(255) NOT NULL
         )
     """)
     conn.commit()
@@ -169,6 +177,33 @@ def has_admin_role(member):
     return any(role.id in ADMIN_ROLE_IDS for role in member.roles)
 
 # =====================
+# BOT HELPERS
+# =====================
+
+def set_metadata(key, value):
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor()
+    cur.execute("""
+        REPLACE INTO bot_metadata (key_name, value) VALUES (%s, %s)
+    """, (key, str(value)))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_metadata(key):
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM bot_metadata WHERE key_name=%s", (key,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row[0] if row else None
+
+# =====================
 # EVENTS
 # =====================
 @bot.event
@@ -261,7 +296,7 @@ async def deleteaccount(ctx, username: str):
         await ctx.send("❌ Failed to delete account.")
 
 @bot.command()
-async def syncaccounts(ctx):
+async def cleanup(ctx):
     guild = bot.get_guild(GUILD_ID)
     removed = []
     for discord_id, jf_username in get_accounts():
@@ -275,7 +310,33 @@ async def syncaccounts(ctx):
     if removed and log_channel:
         await log_channel.send(f"🧹 Removed {len(removed)} Jellyfin accounts: {', '.join(removed)}")
 
-    await ctx.send("✅ Sync complete.")
+    await ctx.send("✅ Cleanup complete.")
+
+@bot.command()
+async def lastcleanup(ctx):
+    member = ctx.guild.get_member(ctx.author.id)
+    if not has_admin_role(member):
+        await ctx.send("❌ You don’t have permission to view the last cleanup.")
+        return
+
+    last_run = get_metadata("last_cleanup")
+    if not last_run:
+        await ctx.send("ℹ️ No cleanup has been run yet.")
+        return
+
+    last_run_dt = datetime.datetime.fromisoformat(last_run)
+    now = datetime.datetime.utcnow()
+    next_run_dt = last_run_dt + datetime.timedelta(hours=24)
+    time_remaining = next_run_dt - now
+
+    hours, remainder = divmod(int(time_remaining.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    await ctx.send(
+        f"🧹 Last cleanup ran at **{last_run_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC**\n"
+        f"⏳ Time until next cleanup: {hours}h {minutes}m {seconds}s"
+    )
+
 
 @bot.command()
 async def searchaccount(ctx, username: str):
@@ -374,7 +435,7 @@ async def help_command(ctx):
 
     if is_admin:
         embed.add_field(name="Admin Commands", value=(
-            f"`{PREFIX}syncaccounts` - Remove Jellyfin accounts from users without roles\n"
+            f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
             f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
@@ -389,23 +450,42 @@ async def help_command(ctx):
 # =====================
 # TASKS
 # =====================
+import datetime
+
 @tasks.loop(hours=24)
 async def daily_check():
     guild = bot.get_guild(GUILD_ID)
     removed = []
+
     for discord_id, jf_username in get_accounts():
         m = guild.get_member(discord_id)
         if m is None or not has_required_role(m):
             if delete_jellyfin_user(jf_username):
                 delete_account(discord_id)
                 removed.append(jf_username)
+
     if removed:
         print(f"Daily cleanup: removed {len(removed)} accounts: {removed}")
+
+    # Log last run timestamp
+    set_metadata("last_cleanup", datetime.datetime.utcnow().isoformat())
+
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     init_db()
+
+    # Check last cleanup
+    last_run = get_metadata("last_cleanup")
+    if last_run:
+        last_run_dt = datetime.datetime.fromisoformat(last_run)
+        now = datetime.datetime.utcnow()
+        delta = now - last_run_dt
+        if delta.total_seconds() >= 24 * 3600:
+            print("Running missed daily cleanup...")
+            await daily_check()  # Run immediately if overdue
+
     daily_check.start()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{PREFIX}help"))
 
