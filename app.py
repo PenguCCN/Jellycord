@@ -381,7 +381,7 @@ async def scanlibraries(ctx):
         await ctx.send(f"❌ Failed to start library scan. Status code: {response.status_code}")
 
 @bot.command()
-async def assignaccount(ctx, jellyfin_username: str, user: discord.User):
+async def link(ctx, jellyfin_username: str, user: discord.User):
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to use this command.")
@@ -389,6 +389,26 @@ async def assignaccount(ctx, jellyfin_username: str, user: discord.User):
 
     add_account(user.id, jellyfin_username)
     await ctx.send(f"✅ Linked Jellyfin account **{jellyfin_username}** to {user.mention}.")
+
+@bot.command()
+async def unlink(ctx, discord_user: discord.User):
+    """Admin-only: unlink a Jellyfin account from a Discord user (without deleting the account)"""
+    guild = ctx.guild
+    member = guild.get_member(ctx.author.id) if guild else None
+
+    if not member or not has_admin_role(member):
+        await ctx.send(f"❌ {ctx.author.mention}, you don’t have permission to use this command.")
+        return
+
+    # Check if the Discord user has a linked Jellyfin account
+    account = get_account_by_discord(discord_user.id)
+    if not account:
+        await ctx.send(f"❌ Discord user {discord_user.mention} does not have a linked Jellyfin account.")
+        return
+
+    # Remove the database entry
+    delete_account(discord_user.id)
+    await ctx.send(f"✅ Unlinked Jellyfin account **{account[0]}** from Discord user {discord_user.mention}.")
 
 @bot.command()
 async def setprefix(ctx, new_prefix: str):
@@ -440,7 +460,8 @@ async def help_command(ctx):
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
             f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
-            f"`{PREFIX}assignaccount <jellyfin_username> @user` - Manually link accounts\n"
+            f"`{PREFIX}link <jellyfin_username> @user` - Manually link accounts\n"
+            f"`{PREFIX}unlink @user` - Manually unlink accounts\n"
         ), inline=False)
         embed.add_field(name="Admin Bot Commands", value=(
             f"`{PREFIX}setprefix` - Change the bots command prefix\n"
