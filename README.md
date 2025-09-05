@@ -44,6 +44,7 @@ Fill out values in the .env and you're good to go!
 
 ***Admin Commands***
 - `!cleanup` - Remove Jellyfin accounts from users without roles
+- `!lastcleanup` - See Last cleanup time, and time remaining before next cleanup
 - `!searchaccount` <jellyfin_username> - Find linked Discord user
 - `!searchdiscord` @user - Find linked Jellyfin account
 - `!scanlibraries` - Scan all Jellyfin libraries
