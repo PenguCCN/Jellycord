@@ -436,6 +436,7 @@ async def help_command(ctx):
     if is_admin:
         embed.add_field(name="Admin Commands", value=(
             f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
+            f"`{PREFIX}lastcleanup` - See Last cleanup time, and time remaining before next cleanup\n"
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
             f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
