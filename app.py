@@ -29,6 +29,7 @@ SYNC_LOG_CHANNEL_ID = get_env_var("SYNC_LOG_CHANNEL_ID", int)
 
 JELLYFIN_URL = get_env_var("JELLYFIN_URL")
 JELLYFIN_API_KEY = get_env_var("JELLYFIN_API_KEY")
+ENABLE_TRIAL_ACCOUNTS = os.getenv("ENABLE_TRIAL_ACCOUNTS", "False").lower() == "true"
 
 JELLYSEERR_ENABLED = os.getenv("JELLYSEERR_ENABLED", "false").lower() == "true"
 JELLYSEERR_URL = os.getenv("JELLYSEERR_URL", "").rstrip("/")
@@ -65,25 +66,27 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 # =====================
 def init_db():
     log_event(f"Initiating Database...")
-    # Create database if it doesn't exist
-    conn = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD)
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD
+    )
     cur = conn.cursor()
     cur.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
     conn.commit()
     cur.close()
     conn.close()
 
-    # Connect to the database
-    conn = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
     cur = conn.cursor()
 
-    # Create accounts table if it doesn't exist
+    # Normal accounts table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS accounts (
             discord_id BIGINT PRIMARY KEY,
             jellyfin_username VARCHAR(255) NOT NULL,
             jellyfin_id VARCHAR(255) NOT NULL,
-            jellyseerr_id VARCHAR(255) DEFAULT NULL
+            jellyseerr_id VARCHAR(255)
         )
     """)
 
@@ -99,11 +102,30 @@ def init_db():
         cur.execute("ALTER TABLE accounts ADD COLUMN jellyseerr_id VARCHAR(255) DEFAULT NULL")
         print("[DB] Added missing column 'jellyseerr_id' to accounts table.")
 
-    # Create bot_metadata table if it doesn't exist
+    # Trial accounts table (persistent history, one-time only)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trial_accounts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            discord_id BIGINT NOT NULL UNIQUE,
+            jellyfin_username VARCHAR(255),
+            jellyfin_id VARCHAR(255),
+            trial_created_at DATETIME NOT NULL,
+            expired BOOLEAN DEFAULT 0
+        )
+    """)
+    
     cur.execute("""
         CREATE TABLE IF NOT EXISTS bot_metadata (
             key_name VARCHAR(255) PRIMARY KEY,
             value VARCHAR(255) NOT NULL
+        )
+    """)
+
+    # Cleanup logs table (already exists in your build)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cleanup_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            run_at DATETIME NOT NULL
         )
     """)
 
@@ -121,6 +143,26 @@ def add_account(discord_id, username, jf_id, js_id=None):
         "REPLACE INTO accounts (discord_id, jellyfin_username, jellyfin_id, jellyseerr_id) VALUES (%s, %s, %s, %s)",
         (discord_id, username, jf_id, js_id)
     )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def init_trial_accounts_table():
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor()
+    # Persistent trial accounts table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trial_accounts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            discord_id BIGINT NOT NULL UNIQUE,
+            jellyfin_username VARCHAR(255) NOT NULL,
+            jellyfin_id VARCHAR(255) NOT NULL,
+            trial_created_at DATETIME NOT NULL,
+            expired BOOLEAN DEFAULT 0
+        )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -302,6 +344,33 @@ def get_metadata(key):
     conn.close()
     return row[0] if row else None
 
+def create_trial_jellyfin_user(username, password):
+    payload = {
+        "Name": username,
+        "Password": password,
+        "Policy": {
+            "EnableDownloads": False,
+            "EnableSyncTranscoding": False,
+            "EnableRemoteControlOfOtherUsers": False,
+            "EnableLiveTvAccess": False,
+            "IsAdministrator": False,
+            "IsHidden": False,
+            "IsDisabled": False
+        }
+    }
+    headers = {
+        "X-Emby-Token": JELLYFIN_API_KEY,
+        "Content-Type": "application/json"
+    }
+    response = requests.post(f"{JELLYFIN_URL}/Users/New", json=payload, headers=headers)
+
+    if response.status_code == 200:
+        return response.json().get("Id")
+    else:
+        print(f"[Jellyfin] Trial user creation failed. Status: {response.status_code}, Response: {response.text}")
+        return None
+
+
 # =====================
 # EVENTS
 # =====================
@@ -380,6 +449,79 @@ async def createaccount(ctx, username: str = None, password: str = None):
             await ctx.send(f"✅ Jellyfin account **{username}** created!\n🌐 Login here: {JELLYFIN_URL}")
     else:
         await ctx.send(f"❌ Failed to create Jellyfin account **{username}**. It may already exist.")
+
+@bot.command()
+async def trialaccount(ctx, username: str = None, password: str = None):
+    """Create a 24-hour trial Jellyfin account. DM-only, one-time per user."""
+    log_event(f"trialaccount invoked by {ctx.author}")
+
+    # Ensure trial accounts are enabled
+    if not ENABLE_TRIAL_ACCOUNTS:
+        await ctx.send("❌ Trial accounts are currently disabled.")
+        return
+
+    # Ensure it's a DM
+    if not isinstance(ctx.channel, discord.DMChannel):
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            pass
+        await ctx.send(f"{ctx.author.mention} ❌ Please DM me to create a trial account.")
+        return
+
+    # Ensure required arguments
+    if username is None or password is None:
+        await ctx.send(command_usage(f"{PREFIX}trialaccount", ["<username>", "<password>"]))
+        return
+
+    guild = bot.get_guild(GUILD_ID)
+    member = guild.get_member(ctx.author.id) if guild else None
+
+    # Check required server role
+    if not member or not has_required_role(member):
+        await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
+        return
+
+    # Check if user already has a normal Jellyfin account
+    if get_account_by_discord(ctx.author.id):
+        await ctx.send(f"❌ {ctx.author.mention}, you already have a Jellyfin account.")
+        return
+
+    # Check if user already had a trial account (one-time)
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM trial_accounts WHERE discord_id=%s", (ctx.author.id,))
+    existing_trial = cur.fetchone()
+    if existing_trial:
+        cur.close()
+        conn.close()
+        await ctx.send(f"❌ {ctx.author.mention}, you have already used your trial account. You cannot create another.")
+        return
+
+    # Create Jellyfin trial user
+    if create_jellyfin_user(username, password):
+        jf_id = get_jellyfin_user(username)
+        if not jf_id:
+            await ctx.send(f"❌ Failed to fetch Jellyfin ID for **{username}**. Please contact an admin.")
+            return
+
+        # Store trial account info in separate persistent table
+        cur.execute("""
+            INSERT INTO trial_accounts (discord_id, jellyfin_username, jellyfin_id, trial_created_at, expired)
+            VALUES (%s, %s, %s, NOW(), 0)
+        """, (ctx.author.id, username, jf_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await ctx.send(f"✅ Trial Jellyfin account **{username}** created! It will expire in 24 hours.\n🌐 Login here: {JELLYFIN_URL}")
+        log_event(f"Trial account created for {ctx.author} ({username})")
+    else:
+        cur.close()
+        conn.close()
+        await ctx.send(f"❌ Failed to create trial account **{username}**. It may already exist.")
 
 
 @bot.command()
@@ -679,12 +821,20 @@ async def help_command(ctx):
         color=discord.Color.blue()
     )
 
-    embed.add_field(name="User Commands", value=(
-        f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account\n"
-        f"`{PREFIX}recoveraccount <newpassword>` - Reset your password\n"
-        f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account\n"
-    ), inline=False)
+    # User commands
+    user_cmds = [
+        f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account",
+        f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
+        f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account"
+    ]
 
+    # Only show trialaccount if enabled
+    if ENABLE_TRIAL_ACCOUNTS:
+        user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a 24-hour trial Jellyfin account")
+
+    embed.add_field(name="User Commands", value="\n".join(user_cmds), inline=False)
+
+    # Admin commands
     if is_admin:
         embed.add_field(name="Admin Commands", value=(
             f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
@@ -696,7 +846,7 @@ async def help_command(ctx):
             f"`{PREFIX}unlink @user` - Manually unlink accounts\n"
         ), inline=False)
         embed.add_field(name="Admin Bot Commands", value=(
-            f"`{PREFIX}setprefix` - Change the bots command prefix\n"
+            f"`{PREFIX}setprefix` - Change the bot's command prefix\n"
             f"`{PREFIX}updates` - Manually check for bot updates\n"
             f"`{PREFIX}logging` - Enable/Disable Console Event Logging\n"
         ), inline=False)
@@ -713,36 +863,49 @@ async def daily_check():
     guild = bot.get_guild(GUILD_ID)
     removed = []
 
-    for row in get_accounts():
-        # Safely unpack values
-        discord_id = row[0]
-        jf_username = row[1]
-        jf_id = row[2] if len(row) > 2 else None
-        js_id = row[3] if len(row) > 3 else None
-
+    # Normal accounts cleanup
+    for discord_id, jf_username, jf_id, js_id in get_accounts():
         m = guild.get_member(discord_id)
         if m is None or not has_required_role(m):
             if delete_jellyfin_user(jf_username):
                 delete_account(discord_id)
-
-                # Remove Jellyseerr account if enabled
-                if JELLYSEERR_ENABLED and js_id:
-                    try:
-                        headers = {"X-Api-Key": JELLYSEERR_API_KEY}
-                        dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{js_id}", headers=headers, timeout=10)
-                        if dr.status_code in (200, 204):
-                            print(f"[Jellyseerr] User {js_id} removed successfully.")
-                    except Exception as e:
-                        print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
-
                 removed.append(jf_username)
 
-    if removed:
-        print(f"Daily cleanup: removed {len(removed)} accounts: {removed}")
+    # Trial accounts cleanup
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM trial_accounts WHERE expired=0")
+    trials = cur.fetchall()
 
-    # Log last run timestamp
-    set_metadata("last_cleanup", datetime.datetime.utcnow().isoformat())
-    log_event(f"Daily cleanup: removed {len(removed)} accounts: {removed}")
+    for trial in trials:
+        created_at = trial["trial_created_at"]
+        if created_at and datetime.datetime.utcnow() > created_at + datetime.timedelta(hours=24):
+            # Delete from Jellyfin
+            delete_jellyfin_user(trial["jellyfin_username"])
+            # Mark trial as expired
+            cur.execute("UPDATE trial_accounts SET expired=1 WHERE discord_id=%s", (trial["discord_id"],))
+            conn.commit()
+            removed.append(f"{trial['jellyfin_username']} (trial)")
+
+
+    cur.close()
+    conn.close()
+
+    # Record cleanup run
+    conn = mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+    )
+    cur = conn.cursor()
+    cur.execute("INSERT INTO cleanup_logs (run_at) VALUES (%s)", (datetime.datetime.utcnow(),))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    if removed:
+        print(f"Cleanup removed {len(removed)} accounts: {removed}")
+
 
 @tasks.loop(hours=1)
 async def check_for_updates():
