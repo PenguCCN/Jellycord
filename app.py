@@ -445,11 +445,27 @@ async def cleanup(ctx):
     log_event(f"cleanup invoked by {ctx.author}")
     guild = bot.get_guild(GUILD_ID)
     removed = []
-    for discord_id, jf_username in get_accounts():
+
+    for row in get_accounts():
+        discord_id = row[0]
+        jf_username = row[1]
+        jf_id = row[2] if len(row) > 2 else None
+        js_id = row[3] if len(row) > 3 else None
+
         m = guild.get_member(discord_id)
         if m is None or not has_required_role(m):
             if delete_jellyfin_user(jf_username):
                 delete_account(discord_id)
+
+                if JELLYSEERR_ENABLED and js_id:
+                    try:
+                        headers = {"X-Api-Key": JELLYSEERR_API_KEY}
+                        dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{js_id}", headers=headers, timeout=10)
+                        if dr.status_code in (200, 204):
+                            print(f"[Jellyseerr] User {js_id} removed successfully.")
+                    except Exception as e:
+                        print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
+
                 removed.append(jf_username)
 
     log_channel = bot.get_channel(SYNC_LOG_CHANNEL_ID)
@@ -697,11 +713,28 @@ async def daily_check():
     guild = bot.get_guild(GUILD_ID)
     removed = []
 
-    for discord_id, jf_username in get_accounts():
+    for row in get_accounts():
+        # Safely unpack values
+        discord_id = row[0]
+        jf_username = row[1]
+        jf_id = row[2] if len(row) > 2 else None
+        js_id = row[3] if len(row) > 3 else None
+
         m = guild.get_member(discord_id)
         if m is None or not has_required_role(m):
             if delete_jellyfin_user(jf_username):
                 delete_account(discord_id)
+
+                # Remove Jellyseerr account if enabled
+                if JELLYSEERR_ENABLED and js_id:
+                    try:
+                        headers = {"X-Api-Key": JELLYSEERR_API_KEY}
+                        dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{js_id}", headers=headers, timeout=10)
+                        if dr.status_code in (200, 204):
+                            print(f"[Jellyseerr] User {js_id} removed successfully.")
+                    except Exception as e:
+                        print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
+
                 removed.append(jf_username)
 
     if removed:
