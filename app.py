@@ -39,7 +39,7 @@ DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
-BOT_VERSION = "1.0.1"
+BOT_VERSION = "1.0.2"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellyfin-Discord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellyfin-Discord/releases"
 
@@ -327,21 +327,30 @@ async def on_message(message):
 # COMMANDS
 # =====================
 
+def command_usage(base: str, args: list[str]) -> str:
+    """Return usage message for a command."""
+    return f"❌ Usage: `{base} {' '.join(args)}`"
+
+def log_event(message: str):
+    """Log events to console if enabled in .env."""
+    if os.getenv("EVENT_LOGGING", "false").lower() == "true":
+        print(f"[EVENT] {message}")
+
 @bot.command()
-async def createaccount(ctx, username: str, password: str):
-    log_event(f"Command createaccount invoked by {ctx.author} with username='{username}'")
-    # DM-only
+async def createaccount(ctx, username: str = None, password: str = None):
+    log_event(f"createaccount invoked by {ctx.author}")
+    if username is None or password is None:
+        await ctx.send(command_usage(f"{PREFIX}createaccount", ["<username>", "<password>"]))
+        return
+
     if not isinstance(ctx.channel, discord.DMChannel):
-        try:
-            await ctx.message.delete()
-        except discord.Forbidden:
-            pass
+        try: await ctx.message.delete()
+        except discord.Forbidden: pass
         await ctx.send(f"{ctx.author.mention} ❌ Please DM me to create your Jellyfin account.")
         return
 
     guild = bot.get_guild(GUILD_ID)
     member = guild.get_member(ctx.author.id) if guild else None
-
     if not member or not has_required_role(member):
         await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
         return
@@ -350,7 +359,6 @@ async def createaccount(ctx, username: str, password: str):
         await ctx.send(f"❌ {ctx.author.mention}, you already have a Jellyfin account.")
         return
 
-    # Create Jellyfin user
     if create_jellyfin_user(username, password):
         jf_id = get_jellyfin_user(username)
         if not jf_id:
@@ -358,24 +366,16 @@ async def createaccount(ctx, username: str, password: str):
             return
 
         js_id = None
-        # Import to Jellyseerr if enabled
         if JELLYSEERR_ENABLED:
             js_id = import_jellyseerr_user(jf_id)
 
-        # Store account in DB
         add_account(ctx.author.id, username, jf_id, js_id)
 
         if JELLYSEERR_ENABLED:
             if js_id:
-                await ctx.send(
-                    f"✅ Jellyfin account **{username}** created and imported into Jellyseerr!\n"
-                    f"🌐 Login here: {JELLYFIN_URL}"
-                )
+                await ctx.send(f"✅ Jellyfin account **{username}** created and imported into Jellyseerr!\n🌐 Login here: {JELLYFIN_URL}")
             else:
-                await ctx.send(
-                    f"⚠️ Jellyfin account **{username}** created, but Jellyseerr import failed.\n"
-                    f"🌐 Login here: {JELLYFIN_URL}"
-                )
+                await ctx.send(f"⚠️ Jellyfin account **{username}** created, but Jellyseerr import failed.\n🌐 Login here: {JELLYFIN_URL}")
         else:
             await ctx.send(f"✅ Jellyfin account **{username}** created!\n🌐 Login here: {JELLYFIN_URL}")
     else:
@@ -383,9 +383,12 @@ async def createaccount(ctx, username: str, password: str):
 
 
 @bot.command()
-async def recoveraccount(ctx, new_password: str):
-    log_event(f"Command recoveraccount invoked by {ctx.author} with username='{username}'")
-    """DM-only: reset your Jellyfin password"""
+async def recoveraccount(ctx, new_password: str = None):
+    log_event(f"recoveraccount invoked by {ctx.author}")
+    if new_password is None:
+        await ctx.send(command_usage(f"{PREFIX}recoveraccount", ["<newpassword>"]))
+        return
+
     if not isinstance(ctx.channel, discord.DMChannel):
         await ctx.message.delete()
         await ctx.send(f"{ctx.author.mention} Please DM me to reset your password.")
@@ -397,24 +400,22 @@ async def recoveraccount(ctx, new_password: str):
         return
 
     username = acc[0]
-
     if reset_jellyfin_password(username, new_password):
-        await ctx.send(
-            f"✅ Your Jellyfin password for **{username}** has been reset!\n"
-            f"🌐 Login here: {JELLYFIN_URL}"
-        )
+        await ctx.send(f"✅ Your Jellyfin password for **{username}** has been reset!\n🌐 Login here: {JELLYFIN_URL}")
     else:
         await ctx.send(f"❌ Failed to reset password for **{username}**. Please contact an admin.")
 
 
 @bot.command()
-async def deleteaccount(ctx, username: str):
-    log_event(f"Command deleteaccount invoked by {ctx.author} with username='{username}'")
+async def deleteaccount(ctx, username: str = None):
+    log_event(f"deleteaccount invoked by {ctx.author}")
+    if username is None:
+        await ctx.send(command_usage(f"{PREFIX}deleteaccount", ["<username>"]))
+        return
+
     if not isinstance(ctx.channel, discord.DMChannel):
-        try:
-            await ctx.message.delete()
-        except discord.Forbidden:
-            pass
+        try: await ctx.message.delete()
+        except discord.Forbidden: pass
         await ctx.send(f"{ctx.author.mention} ❌ Please DM me to delete your Jellyfin account.")
         return
 
@@ -423,13 +424,17 @@ async def deleteaccount(ctx, username: str):
         await ctx.send(f"❌ {ctx.author.mention}, that Jellyfin account is not linked to you.")
         return
 
-    jf_id = acc[1]
-    js_id = acc[2]
+    jf_id, js_id = acc[1], acc[2] if len(acc) > 2 else None
 
     if delete_jellyfin_user(username):
         delete_account(ctx.author.id)
         if JELLYSEERR_ENABLED and js_id:
-            delete_jellyseerr_user(js_id)
+            try:
+                headers = {"X-Api-Key": JELLYSEERR_API_KEY}
+                dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{js_id}", headers=headers, timeout=10)
+                if dr.status_code in (200, 204): print(f"[Jellyseerr] User {js_id} removed successfully.")
+            except Exception as e:
+                print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
         await ctx.send(f"✅ Jellyfin account **{username}** deleted successfully.")
     else:
         await ctx.send(f"❌ Failed to delete Jellyfin account **{username}**.")
@@ -437,10 +442,10 @@ async def deleteaccount(ctx, username: str):
 
 @bot.command()
 async def cleanup(ctx):
-    log_event(f"Command cleanup invoked by {ctx.author}'")
+    log_event(f"cleanup invoked by {ctx.author}")
     guild = bot.get_guild(GUILD_ID)
     removed = []
-    for discord_id, jf_username, _, _ in get_accounts():
+    for discord_id, jf_username in get_accounts():
         m = guild.get_member(discord_id)
         if m is None or not has_required_role(m):
             if delete_jellyfin_user(jf_username):
@@ -456,7 +461,7 @@ async def cleanup(ctx):
 
 @bot.command()
 async def lastcleanup(ctx):
-    log_event(f"Command lastcleanup invoked by {ctx.author}'")
+    log_event(f"lastcleanup invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to view the last cleanup.")
@@ -475,18 +480,14 @@ async def lastcleanup(ctx):
     hours, remainder = divmod(int(time_remaining.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
 
-    await ctx.send(
-        f"🧹 Last cleanup ran at **{last_run_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC**\n"
-        f"⏳ Time until next cleanup: {hours}h {minutes}m {seconds}s"
-    )
+    await ctx.send(f"🧹 Last cleanup ran at **{last_run_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC**\n⏳ Time until next cleanup: {hours}h {minutes}m {seconds}s")
 
 
 @bot.command()
-async def searchaccount(ctx, username: str):
-    log_event(f"Command searchaccount invoked by {ctx.author} with username='{username}'")
-    member = ctx.guild.get_member(ctx.author.id)
-    if not has_admin_role(member):
-        await ctx.send("❌ You don’t have permission to use this command.")
+async def searchaccount(ctx, username: str = None):
+    log_event(f"searchaccount invoked by {ctx.author}")
+    if username is None:
+        await ctx.send(command_usage(f"{PREFIX}searchaccount", ["<jellyfin_username>"]))
         return
 
     result = get_account_by_jellyfin(username)
@@ -499,11 +500,10 @@ async def searchaccount(ctx, username: str):
 
 
 @bot.command()
-async def searchdiscord(ctx, user: discord.User):
-    log_event(f"Command searchdiscord invoked by {ctx.author} for Discord user='{user.mention}'")
-    member = ctx.guild.get_member(ctx.author.id)
-    if not has_admin_role(member):
-        await ctx.send("❌ You don’t have permission to use this command.")
+async def searchdiscord(ctx, user: discord.User = None):
+    log_event(f"searchdiscord invoked by {ctx.author}")
+    if user is None:
+        await ctx.send(command_usage(f"{PREFIX}searchdiscord", ["@user"]))
         return
 
     result = get_account_by_discord(user.id)
@@ -515,14 +515,13 @@ async def searchdiscord(ctx, user: discord.User):
 
 @bot.command()
 async def scanlibraries(ctx):
-    log_event(f"Command scanlibraries invoked by {ctx.author}'")
+    log_event(f"scanlibraries invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
-    headers = {"X-Emby-Token": JELLYFIN_API_KEY}
-    response = requests.post(f"{JELLYFIN_URL}/Library/Refresh", headers=headers)
+    response = requests.post(f"{JELLYFIN_URL}/Library/Refresh", headers={"X-Emby-Token": JELLYFIN_API_KEY})
     if response.status_code in (200, 204):
         await ctx.send("✅ All Jellyfin libraries are being scanned.")
     else:
@@ -530,51 +529,34 @@ async def scanlibraries(ctx):
 
 
 @bot.command()
-async def link(ctx, jellyfin_username: str, user: discord.User, js_id: str = None):
-    log_event(f"Command link invoked by {ctx.author} for account='{jellyfin_username}'")
-    """Admin-only: link a Jellyfin account to a Discord user. Requires JSID if Jellyseerr enabled."""
-    member = ctx.guild.get_member(ctx.author.id)
-    if not member or not has_admin_role(member):
-        await ctx.send("❌ You don’t have permission to use this command.")
+async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js_id: str = None):
+    log_event(f"link invoked by {ctx.author}")
+    usage_args = ["<Jellyfin Account>", "<@user>"]
+    if JELLYSEERR_ENABLED: usage_args.append("<Jellyseerr ID>")
+
+    if jellyfin_username is None or user is None or (JELLYSEERR_ENABLED and js_id is None):
+        await ctx.send(command_usage(f"{PREFIX}link", usage_args))
         return
 
-    # Fetch existing account
-    acc = get_account_by_discord(user.id)
-    jf_id = acc[1] if acc else None
+    existing_acc = get_account_by_discord(user.id)
+    if existing_acc:
+        await ctx.send(f"❌ Discord user {user.mention} already has a linked account.")
+        return
 
-    # Ensure jf_id exists
+    jf_id = get_jellyfin_user(jellyfin_username)
     if not jf_id:
-        jf_id = get_jellyfin_user(jellyfin_username)
-        if not jf_id:
-            await ctx.send(f"❌ Could not find Jellyfin ID for **{jellyfin_username}**.")
-            return
+        await ctx.send(f"❌ Could not find Jellyfin account **{jellyfin_username}**. Make sure it exists.")
+        return
 
-    # Require JSID if Jellyseerr is enabled
-    if JELLYSEERR_ENABLED:
-        if not js_id:
-            await ctx.send(f"❌ Jellyseerr is enabled. You must provide the Jellyseerr ID. Usage:\n"
-                           f"`{PREFIX}link <Jellyfin Account> @user <Jellyseerr ID>`")
-            return
-
-    # Store account in DB
     add_account(user.id, jellyfin_username, jf_id, js_id)
-
-    msg = f"✅ Linked Jellyfin account **{jellyfin_username}** to {user.mention}."
-    if JELLYSEERR_ENABLED and js_id:
-        msg += " Jellyseerr account linked successfully."
-
-    await ctx.send(msg)
-
+    await ctx.send(f"✅ Linked Jellyfin account **{jellyfin_username}** to {user.mention}.")
 
 
 @bot.command()
-async def unlink(ctx, discord_user: discord.User):
-    log_event(f"Command unlink invoked by {ctx.author} for Discord user='{discord.User}'")
-    guild = ctx.guild
-    member = guild.get_member(ctx.author.id) if guild else None
-
-    if not member or not has_admin_role(member):
-        await ctx.send(f"❌ {ctx.author.mention}, you don’t have permission to use this command.")
+async def unlink(ctx, discord_user: discord.User = None):
+    log_event(f"unlink invoked by {ctx.author}")
+    if discord_user is None:
+        await ctx.send(command_usage(f"{PREFIX}unlink", ["@user"]))
         return
 
     account = get_account_by_discord(discord_user.id)
@@ -587,8 +569,12 @@ async def unlink(ctx, discord_user: discord.User):
 
 
 @bot.command()
-async def setprefix(ctx, new_prefix: str):
-    log_event(f"Command setprefix invoked by {ctx.author} and set prefix to='{new_prefix}'")
+async def setprefix(ctx, new_prefix: str = None):
+    log_event(f"setprefix invoked by {ctx.author}")
+    if new_prefix is None:
+        await ctx.send(command_usage(f"{PREFIX}setprefix", ["<symbol>"]))
+        return
+
     member = ctx.guild.get_member(ctx.author.id)
     if not member or not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to use this command.")
@@ -598,12 +584,9 @@ async def setprefix(ctx, new_prefix: str):
         await ctx.send("❌ Prefix must be a single non-alphanumeric symbol (e.g. !, $, %, ?)")
         return
 
-    # Update prefix
-    global PREFIX
     PREFIX = new_prefix
     bot.command_prefix = PREFIX
 
-    # Write to .env
     lines = []
     with open(".env", "r") as f:
         for line in f:
@@ -611,14 +594,14 @@ async def setprefix(ctx, new_prefix: str):
                 lines.append(f"PREFIX={new_prefix}\n")
             else:
                 lines.append(line)
-    with open(".env", "w") as f:
-        f.writelines(lines)
+    with open(".env", "w") as f: f.writelines(lines)
 
     await ctx.send(f"✅ Command prefix updated to `{new_prefix}`")
 
+
 @bot.command()
 async def updates(ctx):
-    log_event(f"Command updates invoked by {ctx.author}. Current Version: '{BOT_VERSION}'")
+    log_event(f"updates invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to use this command.")
@@ -628,11 +611,7 @@ async def updates(ctx):
         response = requests.get(VERSION_URL, timeout=10)
         if response.status_code == 200:
             latest_version = response.text.strip()
-            await ctx.send(
-                f"🤖 Bot version: `{BOT_VERSION}`\n"
-                f"🌍 Latest version: `{latest_version}`\n"
-                f"{'✅ Up to date!' if BOT_VERSION == latest_version else f'⚠️ Update available! Get it here: {RELEASES_URL}'}"
-            )
+            await ctx.send(f"🤖 Bot version: `{BOT_VERSION}`\n🌍 Latest version: `{latest_version}`\n{'✅ Up to date!' if BOT_VERSION == latest_version else f'⚠️ Update available! Get it here: {RELEASES_URL}'}")
         else:
             await ctx.send("❌ Failed to fetch latest version info.")
     except Exception as e:
@@ -742,11 +721,10 @@ async def check_for_updates():
                 log_channel = bot.get_channel(SYNC_LOG_CHANNEL_ID)
                 if log_channel:
                     await log_channel.send(
-                        f"⚠️ **Update available for Jellyfin Bot!**\n"
                         f"📌 Current version: `{BOT_VERSION}`\n"
                         f"⬆️ Latest version: `{latest_version}`\n"
-                        f"🔗 Download/update here:\n\n"
-                        f"🔗 Download/update here: {RELEASES_URL}"
+                        f"⚠️ **Update available for Jellyfin Bot! Get it here:**\n\n"
+                        f"{RELEASES_URL}"
                     )
                     log_event(f"Latest Version:'{latest_version}', Current Version: '{BOT_VERSION}'")
     except Exception as e:
