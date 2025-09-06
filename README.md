@@ -55,3 +55,4 @@ Fill out values in the .env and you're good to go!
 ***Admin Bot Commands***
 - `!setprefix` - Change the bots command prefix
 - `!updates` - Manually check for bot updates
+- `!logging` - Enable/Disable Console Event Logging
