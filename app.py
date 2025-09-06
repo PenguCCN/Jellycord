@@ -35,6 +35,10 @@ DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
+BOT_VERSION = "1.0.0"
+VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellyfin-Discord/main/version.txt"
+RELEASES_URL = "https://github.com/PenguCCN/Jellyfin-Discord/releases"
+
 # =====================
 # DISCORD SETUP
 # =====================
@@ -412,29 +416,55 @@ async def unlink(ctx, discord_user: discord.User):
 
 @bot.command()
 async def setprefix(ctx, new_prefix: str):
-    """Admin-only: change the bot command prefix"""
+    member = ctx.guild.get_member(ctx.author.id)
+    if not member or not has_admin_role(member):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    if len(new_prefix) != 1 or new_prefix.isalnum():
+        await ctx.send("❌ Prefix must be a single non-alphanumeric symbol (e.g. !, $, %, ?)")
+        return
+
+    # Update prefix
+    global PREFIX
+    PREFIX = new_prefix
+    bot.command_prefix = PREFIX
+
+    # Write to .env
+    lines = []
+    with open(".env", "r") as f:
+        for line in f:
+            if line.startswith("PREFIX="):
+                lines.append(f"PREFIX={new_prefix}\n")
+            else:
+                lines.append(line)
+    with open(".env", "w") as f:
+        f.writelines(lines)
+
+    await ctx.send(f"✅ Command prefix updated to `{new_prefix}`")
+
+@bot.command()
+async def updates(ctx):
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(member):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
-    global PREFIX
-    PREFIX = new_prefix
-    bot.command_prefix = PREFIX  # Update bot prefix dynamically
+    try:
+        response = requests.get(VERSION_URL, timeout=10)
+        if response.status_code == 200:
+            latest_version = response.text.strip()
+            await ctx.send(
+                f"🤖 Bot version: `{BOT_VERSION}`\n"
+                f"🌍 Latest version: `{latest_version}`\n"
+                f"{'✅ Up to date!' if BOT_VERSION == latest_version else f'⚠️ Update available! Get it here: {RELEASES_URL}'}"
+            )
+        else:
+            await ctx.send("❌ Failed to fetch latest version info.")
+    except Exception as e:
+        await ctx.send(f"❌ Error checking version: {e}")
 
-    # Update .env file
-    env_file = ".env"
-    lines = []
-    with open(env_file, "r") as f:
-        for line in f:
-            if line.startswith("PREFIX="):
-                lines.append(f"PREFIX={PREFIX}\n")
-            else:
-                lines.append(line)
-    with open(env_file, "w") as f:
-        f.writelines(lines)
 
-    await ctx.send(f"✅ Command prefix has been updated to `{PREFIX}`")
 
 @bot.command(name="help")
 async def help_command(ctx):
@@ -442,7 +472,7 @@ async def help_command(ctx):
     is_admin = has_admin_role(member)
 
     embed = discord.Embed(
-        title="📖 Jellyfin Bot Help",
+        title=f"📖 Jellyfin Bot Help {BOT_VERSION}",
         description="Here are the available commands:",
         color=discord.Color.blue()
     )
@@ -465,6 +495,7 @@ async def help_command(ctx):
         ), inline=False)
         embed.add_field(name="Admin Bot Commands", value=(
             f"`{PREFIX}setprefix` - Change the bots command prefix\n"
+            f"`{PREFIX}updates` - Manually check for bot updates\n"
         ), inline=False)
 
     await ctx.send(embed=embed)
@@ -492,6 +523,26 @@ async def daily_check():
     # Log last run timestamp
     set_metadata("last_cleanup", datetime.datetime.utcnow().isoformat())
 
+@tasks.loop(hours=1)
+async def check_for_updates():
+    try:
+        response = requests.get(VERSION_URL, timeout=10)
+        if response.status_code == 200:
+            latest_version = response.text.strip()
+            if latest_version != BOT_VERSION:
+                log_channel = bot.get_channel(SYNC_LOG_CHANNEL_ID)
+                if log_channel:
+                    await log_channel.send(
+                        f"⚠️ **Update available for Jellyfin Bot!**\n"
+                        f"📌 Current version: `{BOT_VERSION}`\n"
+                        f"⬆️ Latest version: `{latest_version}`\n\n"
+                        f"🔗 Download/update here: {RELEASES_URL}"
+                    )
+    except Exception as e:
+        print(f"[Update Check] Failed: {e}")
+
+
+
 
 @bot.event
 async def on_ready():
@@ -509,6 +560,7 @@ async def on_ready():
             await daily_check()  # Run immediately if overdue
 
     daily_check.start()
+    check_for_updates.start()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{PREFIX}help"))
 
 bot.run(TOKEN)
