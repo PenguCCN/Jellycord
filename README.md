@@ -42,6 +42,7 @@ Fill out values in the .env and you're good to go!
 - `!createaccount` <username> <password> - Create your Jellyfin account
 - `!recoveraccount` <username> <newpassword> - Reset your password
 - `!deleteaccount` <username> - Delete your Jellyfin account
+- `!trialaccount` <username> <password> - Create a 24-hour trial Jellyfin account. Only if ENABLE_TRIAL_ACCOUNTS=True
 
 ***Admin Commands***
 - `!cleanup` - Remove Jellyfin accounts from users without roles

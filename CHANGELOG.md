@@ -1,8 +1,8 @@
 # 1.0.3
 
-- Fixed: ValueError: too many values to unpack (expected 2)
+- Fixed: `ValueError: too many values to unpack (expected 2)`
 - Cleanup will now delete Jellyseerr accounts as well
-- Added Trial jellyfin account support (enable in .env). Will not create a Jellyseerr account, lasts 24 hours, one time use.
+- Added Trial Jellyfin account support (enable in .env). Will not create a Jellyseerr account, lasts 24 hours, one time use.
 
 # 1.0.2
 
