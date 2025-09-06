@@ -121,7 +121,7 @@ def init_db():
         )
     """)
 
-    # Cleanup logs table (already exists in your build)
+    # Cleanup logs table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS cleanup_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
