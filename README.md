@@ -16,6 +16,7 @@ Fill out values in the .env and you're good to go!
 - Run Library Scanning
 - Manual Account Linking (For previously made Jellyfin accounts)
 - Change bot prefix live
+- Checks for new releases
 
 # Command Overview
 
@@ -53,3 +54,4 @@ Fill out values in the .env and you're good to go!
 
 ***Admin Bot Commands***
 - `!setprefix` - Change the bots command prefix
+- `!updates` - Manually check for bot updates
