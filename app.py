@@ -30,12 +30,16 @@ SYNC_LOG_CHANNEL_ID = get_env_var("SYNC_LOG_CHANNEL_ID", int)
 JELLYFIN_URL = get_env_var("JELLYFIN_URL")
 JELLYFIN_API_KEY = get_env_var("JELLYFIN_API_KEY")
 
+JELLYSEERR_ENABLED = os.getenv("JELLYSEERR_ENABLED", "false").lower() == "true"
+JELLYSEERR_URL = os.getenv("JELLYSEERR_URL", "").rstrip("/")
+JELLYSEERR_API_KEY = os.getenv("JELLYSEERR_API_KEY", "")
+
 DB_HOST = get_env_var("DB_HOST")
 DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
-BOT_VERSION = "1.0.0"
+BOT_VERSION = "1.0.1"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellyfin-Discord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellyfin-Discord/releases"
 
@@ -51,47 +55,67 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 # DATABASE SETUP
 # =====================
 def init_db():
-    # Existing DB creation
-    conn = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD
-    )
+    # Create database if it doesn't exist
+    conn = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD)
     cur = conn.cursor()
     cur.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
     conn.commit()
     cur.close()
     conn.close()
 
-    conn = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
+    # Connect to the database
+    conn = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME)
     cur = conn.cursor()
+
+    # Create accounts table if it doesn't exist
     cur.execute("""
         CREATE TABLE IF NOT EXISTS accounts (
             discord_id BIGINT PRIMARY KEY,
-            jellyfin_username VARCHAR(255) NOT NULL
+            jellyfin_username VARCHAR(255) NOT NULL,
+            jellyfin_id VARCHAR(255) NOT NULL,
+            jellyseerr_id VARCHAR(255) DEFAULT NULL
         )
     """)
-    # New table for metadata
+
+    # Ensure jellyfin_id exists
+    cur.execute("SHOW COLUMNS FROM accounts LIKE 'jellyfin_id'")
+    if cur.fetchone() is None:
+        cur.execute("ALTER TABLE accounts ADD COLUMN jellyfin_id VARCHAR(255) NOT NULL")
+        print("[DB] Added missing column 'jellyfin_id' to accounts table.")
+
+    # Ensure jellyseerr_id exists
+    cur.execute("SHOW COLUMNS FROM accounts LIKE 'jellyseerr_id'")
+    if cur.fetchone() is None:
+        cur.execute("ALTER TABLE accounts ADD COLUMN jellyseerr_id VARCHAR(255) DEFAULT NULL")
+        print("[DB] Added missing column 'jellyseerr_id' to accounts table.")
+
+    # Create bot_metadata table if it doesn't exist
     cur.execute("""
         CREATE TABLE IF NOT EXISTS bot_metadata (
             key_name VARCHAR(255) PRIMARY KEY,
             value VARCHAR(255) NOT NULL
         )
     """)
+
     conn.commit()
     cur.close()
     conn.close()
 
-def add_account(discord_id, jellyfin_username):
+
+def add_account(discord_id, username, jf_id, js_id=None):
     conn = mysql.connector.connect(
         host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
     )
     cur = conn.cursor()
-    cur.execute("REPLACE INTO accounts (discord_id, jellyfin_username) VALUES (%s, %s)",
-                (discord_id, jellyfin_username))
+    cur.execute(
+        "REPLACE INTO accounts (discord_id, jellyfin_username, jellyfin_id, jellyseerr_id) VALUES (%s, %s, %s, %s)",
+        (discord_id, username, jf_id, js_id)
+    )
     conn.commit()
     cur.close()
     conn.close()
+
+
 
 def get_accounts():
     conn = mysql.connector.connect(
@@ -120,11 +144,15 @@ def get_account_by_discord(discord_id):
         host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
     )
     cur = conn.cursor()
-    cur.execute("SELECT jellyfin_username FROM accounts WHERE discord_id=%s", (discord_id,))
+    cur.execute(
+        "SELECT jellyfin_username, jellyfin_id, jellyseerr_id FROM accounts WHERE discord_id=%s",
+        (discord_id,)
+    )
     row = cur.fetchone()
     cur.close()
     conn.close()
-    return row
+    return row  # (jellyfin_username, jellyfin_id, jellyseerr_id)
+
 
 def delete_account(discord_id):
     conn = mysql.connector.connect(
@@ -170,6 +198,53 @@ def reset_jellyfin_password(username: str, new_password: str) -> bool:
     data = {"Password": new_password}
     response = requests.post(f"{JELLYFIN_URL}/Users/{user_id}/Password", headers=headers, json=data)
     return response.status_code in (200, 204)
+
+# =====================
+# JELLYSEERR HELPERS
+# =====================
+
+def import_jellyseerr_user(jellyfin_user_id: str) -> str:
+    """Import user into Jellyseerr. Returns the Jellyseerr user ID if successful, else None."""
+    if not JELLYSEERR_ENABLED:
+        return None
+    headers = {"X-Api-Key": JELLYSEERR_API_KEY, "Content-Type": "application/json"}
+    data = {"jellyfinUserIds": [jellyfin_user_id]}
+    try:
+        url = f"{JELLYSEERR_URL}/api/v1/user/import-from-jellyfin"
+        r = requests.post(url, headers=headers, json=data, timeout=15)
+        if r.status_code in (200, 201):
+            js_user = r.json()
+            if isinstance(js_user, list) and len(js_user) > 0 and "id" in js_user[0]:
+                js_id = js_user[0]["id"]
+                print(f"[Jellyseerr] User {jellyfin_user_id} imported successfully with Jellyseerr ID {js_id}.")
+                return js_id
+        print(f"[Jellyseerr] Import failed. Status: {r.status_code}, Response: {r.text}")
+        return None
+    except Exception as e:
+        print(f"[Jellyseerr] Failed to import user: {e}")
+        return None
+
+
+
+def delete_jellyseerr_user(username: str) -> bool:
+    if not JELLYSEERR_ENABLED:
+        return True
+    headers = {"X-Api-Key": JELLYSEERR_API_KEY}
+    try:
+        # First fetch users to find matching ID
+        r = requests.get(f"{JELLYSEERR_URL}/api/v1/user", headers=headers, timeout=10)
+        if r.status_code != 200:
+            return False
+        users = r.json()
+        for u in users:
+            if u.get("username", "").lower() == username.lower():
+                user_id = u["id"]
+                dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{user_id}", headers=headers, timeout=10)
+                return dr.status_code in (200, 204)
+        return True  # no user found, nothing to delete
+    except Exception as e:
+        print(f"[Jellyseerr] Failed to delete user {username}: {e}")
+        return False
 
 # =====================
 # DISCORD HELPERS
@@ -233,27 +308,57 @@ async def on_message(message):
 # =====================
 @bot.command()
 async def createaccount(ctx, username: str, password: str):
+    # DM-only
     if not isinstance(ctx.channel, discord.DMChannel):
-        await ctx.message.delete()
-        await ctx.send(f"{ctx.author.mention} Please DM me to create your Jellyfin account.")
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            pass
+        await ctx.send(f"{ctx.author.mention} ❌ Please DM me to create your Jellyfin account.")
         return
 
     guild = bot.get_guild(GUILD_ID)
-    member = guild.get_member(ctx.author.id)
+    member = guild.get_member(ctx.author.id) if guild else None
 
     if not member or not has_required_role(member):
-        await ctx.send("❌ You don’t have the required role to create an account.")
+        await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
         return
 
     if get_account_by_discord(ctx.author.id):
-        await ctx.send("❌ You already have a Jellyfin account.")
+        await ctx.send(f"❌ {ctx.author.mention}, you already have a Jellyfin account.")
         return
 
+    # Create Jellyfin user
     if create_jellyfin_user(username, password):
-        add_account(ctx.author.id, username)
-        await ctx.send(f"✅ Account created! You can log in at {JELLYFIN_URL}")
+        jf_id = get_jellyfin_user(username)
+        if not jf_id:
+            await ctx.send(f"❌ Failed to fetch Jellyfin ID for **{username}**. Please contact an admin.")
+            return
+
+        js_id = None
+        # Import to Jellyseerr if enabled
+        if JELLYSEERR_ENABLED:
+            js_id = import_jellyseerr_user(jf_id)
+
+        # Store account in DB
+        add_account(ctx.author.id, username, jf_id, js_id)
+
+        if JELLYSEERR_ENABLED:
+            if js_id:
+                await ctx.send(
+                    f"✅ Jellyfin account **{username}** created and imported into Jellyseerr!\n"
+                    f"🌐 Login here: {JELLYFIN_URL}"
+                )
+            else:
+                await ctx.send(
+                    f"⚠️ Jellyfin account **{username}** created, but Jellyseerr import failed.\n"
+                    f"🌐 Login here: {JELLYFIN_URL}"
+                )
+        else:
+            await ctx.send(f"✅ Jellyfin account **{username}** created!\n🌐 Login here: {JELLYFIN_URL}")
     else:
-        await ctx.send("❌ Failed to create account. Username may already exist.")
+        await ctx.send(f"❌ Failed to create Jellyfin account **{username}**. It may already exist.")
+
 
 @bot.command()
 async def recoveraccount(ctx, new_password: str):
@@ -284,20 +389,40 @@ async def recoveraccount(ctx, new_password: str):
 @bot.command()
 async def deleteaccount(ctx, username: str):
     if not isinstance(ctx.channel, discord.DMChannel):
-        await ctx.message.delete()
-        await ctx.send(f"{ctx.author.mention} Please DM me to delete your Jellyfin account.")
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            pass
+        await ctx.send(f"{ctx.author.mention} ❌ Please DM me to delete your Jellyfin account.")
         return
 
+    # Fetch account linked to this Discord user
     acc = get_account_by_discord(ctx.author.id)
     if not acc or acc[0].lower() != username.lower():
-        await ctx.send("❌ That Jellyfin account is not linked to your Discord user.")
+        await ctx.send(f"❌ {ctx.author.mention}, that Jellyfin account is not linked to you.")
         return
 
+    jf_id = acc[1]        # Jellyfin ID
+    js_id = acc[2] if len(acc) > 2 else None  # Jellyseerr ID
+
+    # Delete Jellyfin account
     if delete_jellyfin_user(username):
         delete_account(ctx.author.id)
-        await ctx.send("✅ Account deleted.")
+
+        # Delete Jellyseerr user if enabled
+        if JELLYSEERR_ENABLED and js_id:
+            try:
+                headers = {"X-Api-Key": JELLYSEERR_API_KEY}
+                dr = requests.delete(f"{JELLYSEERR_URL}/api/v1/user/{js_id}", headers=headers, timeout=10)
+                if dr.status_code in (200, 204):
+                    print(f"[Jellyseerr] User {js_id} removed successfully.")
+            except Exception as e:
+                print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
+
+        await ctx.send(f"✅ Jellyfin account **{username}** deleted successfully.")
     else:
-        await ctx.send("❌ Failed to delete account.")
+        await ctx.send(f"❌ Failed to delete Jellyfin account **{username}**.")
+
 
 @bot.command()
 async def cleanup(ctx):
