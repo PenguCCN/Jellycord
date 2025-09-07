@@ -22,7 +22,7 @@ def get_env_var(key: str, cast=str, required=True):
 
 TOKEN = get_env_var("DISCORD_TOKEN")
 PREFIX = os.getenv("PREFIX", "!")  # Default to "!" if not set
-GUILD_ID = get_env_var("GUILD_ID", int)
+GUILD_IDS = [int(x.strip()) for x in get_env_var("GUILD_IDS").split(",")]
 REQUIRED_ROLE_IDS = [int(x) for x in get_env_var("REQUIRED_ROLE_IDS").split(",")]
 ADMIN_ROLE_IDS = [int(x) for x in get_env_var("ADMIN_ROLE_IDS").split(",")]
 SYNC_LOG_CHANNEL_ID = get_env_var("SYNC_LOG_CHANNEL_ID", int)
@@ -40,7 +40,7 @@ DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
-BOT_VERSION = "1.0.3"
+BOT_VERSION = "1.0.4"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 
@@ -311,11 +311,30 @@ def delete_jellyseerr_user(js_id: str) -> bool:
 # =====================
 # DISCORD HELPERS
 # =====================
-def has_required_role(member):
-    return any(role.id in REQUIRED_ROLE_IDS for role in member.roles)
 
-def has_admin_role(member):
-    return any(role.id in ADMIN_ROLE_IDS for role in member.roles)
+def has_required_role(user: discord.User | discord.Member) -> bool:
+    """Check if the user has any of the required roles across all configured guilds."""
+    for gid in GUILD_IDS:
+        guild = bot.get_guild(gid)
+        if not guild:
+            continue
+        member = guild.get_member(user.id)
+        if member and any(role.id in REQUIRED_ROLE_IDS for role in member.roles):
+            return True
+    return False
+
+
+def has_admin_role(user: discord.User | discord.Member) -> bool:
+    """Check if the user has any of the admin roles across all configured guilds."""
+    for gid in GUILD_IDS:
+        guild = bot.get_guild(gid)
+        if not guild:
+            continue
+        member = guild.get_member(user.id)
+        if member and any(role.id in ADMIN_ROLE_IDS for role in member.roles):
+            return True
+    return False
+
 
 # =====================
 # BOT HELPERS
@@ -418,8 +437,14 @@ async def createaccount(ctx, username: str = None, password: str = None):
         await ctx.send(f"{ctx.author.mention} ❌ Please DM me to create your Jellyfin account.")
         return
 
-    guild = bot.get_guild(GUILD_ID)
-    member = guild.get_member(ctx.author.id) if guild else None
+    member = None
+    for gid in GUILD_IDS:
+        guild = bot.get_guild(gid)
+        if guild:
+            member = guild.get_member(ctx.author.id)
+            if member and has_required_role(member):
+                break
+
     if not member or not has_required_role(member):
         await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
         return
@@ -474,10 +499,14 @@ async def trialaccount(ctx, username: str = None, password: str = None):
         await ctx.send(command_usage(f"{PREFIX}trialaccount", ["<username>", "<password>"]))
         return
 
-    guild = bot.get_guild(GUILD_ID)
-    member = guild.get_member(ctx.author.id) if guild else None
+    member = None
+    for gid in GUILD_IDS:
+        guild = bot.get_guild(gid)
+        if guild:
+            member = guild.get_member(ctx.author.id)
+            if member and has_required_role(member):
+                break
 
-    # Check required server role
     if not member or not has_required_role(member):
         await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
         return
@@ -585,17 +614,18 @@ async def deleteaccount(ctx, username: str = None):
 @bot.command()
 async def cleanup(ctx):
     log_event(f"cleanup invoked by {ctx.author}")
-    guild = bot.get_guild(GUILD_ID)
     removed = []
 
-    for row in get_accounts():
-        discord_id = row[0]
-        jf_username = row[1]
-        jf_id = row[2] if len(row) > 2 else None
-        js_id = row[3] if len(row) > 3 else None
+    for discord_id, jf_username, jf_id, js_id in get_accounts():
+        member = None
+        for gid in GUILD_IDS:
+            guild = bot.get_guild(gid)
+            if guild:
+                member = guild.get_member(discord_id)
+                if member:
+                    break
 
-        m = guild.get_member(discord_id)
-        if m is None or not has_required_role(m):
+        if member is None or not has_required_role(member):
             if delete_jellyfin_user(jf_username):
                 delete_account(discord_id)
 
@@ -616,12 +646,59 @@ async def cleanup(ctx):
 
     await ctx.send("✅ Cleanup complete.")
 
+@bot.command()
+async def listvalidusers(ctx):
+    """Admin-only: List how many registered users have a valid role."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    accounts = get_accounts()
+    valid_users = []
+    invalid_users = []
+
+    for discord_id, jf_username, jf_id, js_id in accounts:
+        user = await bot.fetch_user(discord_id)
+        if has_required_role(user):
+            valid_users.append(user)
+        else:
+            invalid_users.append(user)
+
+    embed = discord.Embed(
+        title="📊 Registered User Role Status",
+        color=discord.Color.green()
+    )
+    embed.add_field(
+        name="✅ Valid Users",
+        value=f"{len(valid_users)} users",
+        inline=True
+    )
+    embed.add_field(
+        name="❌ Invalid Users",
+        value=f"{len(invalid_users)} users",
+        inline=True
+    )
+    if len(valid_users) > 0:
+        embed.add_field(
+            name="Valid Users List",
+            value="\n".join([u.mention for u in valid_users[:20]]) + ("..." if len(valid_users) > 20 else ""),
+            inline=False
+        )
+    if len(invalid_users) > 0:
+        embed.add_field(
+            name="Invalid Users List",
+            value="\n".join([u.mention for u in invalid_users[:20]]) + ("..." if len(invalid_users) > 20 else ""),
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
 
 @bot.command()
 async def lastcleanup(ctx):
     log_event(f"lastcleanup invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
-    if not has_admin_role(member):
+    if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to view the last cleanup.")
         return
 
@@ -675,7 +752,7 @@ async def searchdiscord(ctx, user: discord.User = None):
 async def scanlibraries(ctx):
     log_event(f"scanlibraries invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
-    if not has_admin_role(member):
+    if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
@@ -734,7 +811,7 @@ async def setprefix(ctx, new_prefix: str = None):
         return
 
     member = ctx.guild.get_member(ctx.author.id)
-    if not member or not has_admin_role(member):
+    if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
@@ -761,7 +838,7 @@ async def setprefix(ctx, new_prefix: str = None):
 async def updates(ctx):
     log_event(f"updates invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
-    if not has_admin_role(member):
+    if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
@@ -779,7 +856,7 @@ async def updates(ctx):
 async def logging(ctx, state: str):
     """Admin-only: Enable or disable event logging."""
     member = ctx.guild.get_member(ctx.author.id)
-    if not member or not has_admin_role(member):
+    if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
 
@@ -813,7 +890,7 @@ async def logging(ctx, state: str):
 async def help_command(ctx):
     log_event(f"Command help invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
-    is_admin = has_admin_role(member)
+    is_admin = has_admin_role(ctx.author)
 
     embed = discord.Embed(
         title=f"📖 Jellyfin Bot Help {BOT_VERSION}",
@@ -838,6 +915,7 @@ async def help_command(ctx):
     if is_admin:
         embed.add_field(name="Admin Commands", value=(
             f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
+            f"`{PREFIX}listvalidusers` - Show number of valid and invalid accounts\n"
             f"`{PREFIX}lastcleanup` - See Last cleanup time, and time remaining before next cleanup\n"
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
@@ -860,51 +938,124 @@ import datetime
 
 @tasks.loop(hours=24)
 async def daily_check():
-    guild = bot.get_guild(GUILD_ID)
+    log_event("Running daily account cleanup check...")
     removed = []
 
     # Normal accounts cleanup
-    for discord_id, jf_username, jf_id, js_id in get_accounts():
-        m = guild.get_member(discord_id)
-        if m is None or not has_required_role(m):
-            if delete_jellyfin_user(jf_username):
+    for row in get_accounts():
+        # safe unpacking in case schema varies
+        discord_id = row[0]
+        jf_username = row[1] if len(row) > 1 else None
+        jf_id = row[2] if len(row) > 2 else None
+        js_id = row[3] if len(row) > 3 else None
+
+        # find the member across configured guilds
+        member = None
+        for gid in GUILD_IDS:
+            guild = bot.get_guild(gid)
+            if not guild:
+                continue
+            candidate = guild.get_member(discord_id)
+            if candidate:
+                member = candidate
+                break
+
+        # if no member found or member doesn't have a required role -> delete account
+        if member is None or not has_required_role(member):
+            if jf_username:
+                try:
+                    if delete_jellyfin_user(jf_username):
+                        log_event(f"Deleted Jellyfin user {jf_username} for Discord ID {discord_id}")
+                    else:
+                        log_event(f"Failed to delete Jellyfin user {jf_username} for Discord ID {discord_id}")
+                except Exception as e:
+                    print(f"[Cleanup] Error deleting Jellyfin user {jf_username}: {e}")
+
+            # remove DB entry for normal account
+            try:
                 delete_account(discord_id)
-                removed.append(jf_username)
+            except Exception as e:
+                print(f"[Cleanup] Error removing DB entry for Discord ID {discord_id}: {e}")
 
-    # Trial accounts cleanup
-    conn = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT * FROM trial_accounts WHERE expired=0")
-    trials = cur.fetchall()
+            # remove from Jellyseerr if we have an id and integration enabled
+            if JELLYSEERR_ENABLED and js_id:
+                try:
+                    if delete_jellyseerr_user(js_id):
+                        log_event(f"Deleted Jellyseerr user {js_id} for Discord ID {discord_id}")
+                    else:
+                        log_event(f"Failed to delete Jellyseerr user {js_id} for Discord ID {discord_id}")
+                except Exception as e:
+                    print(f"[Cleanup] Failed to delete Jellyseerr user {js_id}: {e}")
 
-    for trial in trials:
-        created_at = trial["trial_created_at"]
-        if created_at and datetime.datetime.utcnow() > created_at + datetime.timedelta(hours=24):
-            # Delete from Jellyfin
-            delete_jellyfin_user(trial["jellyfin_username"])
-            # Mark trial as expired
-            cur.execute("UPDATE trial_accounts SET expired=1 WHERE discord_id=%s", (trial["discord_id"],))
-            conn.commit()
-            removed.append(f"{trial['jellyfin_username']} (trial)")
+            removed.append(jf_username or f"{discord_id}")
 
+    # Trial accounts cleanup (persistent history table)
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+        )
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT * FROM trial_accounts WHERE expired=0")
+        trials = cur.fetchall()
 
-    cur.close()
-    conn.close()
+        for trial in trials:
+            created_at = trial.get("trial_created_at") or trial.get("created_at")  # compatibility
+            if not created_at:
+                continue
 
-    # Record cleanup run
-    conn = mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-    )
-    cur = conn.cursor()
-    cur.execute("INSERT INTO cleanup_logs (run_at) VALUES (%s)", (datetime.datetime.utcnow(),))
-    conn.commit()
-    cur.close()
-    conn.close()
+            # created_at is a datetime from the DB (cursor dictionary=True)
+            if datetime.datetime.utcnow() > created_at + datetime.timedelta(hours=24):
+                # delete from Jellyfin (best-effort)
+                try:
+                    delete_jellyfin_user(trial.get("jellyfin_username"))
+                except Exception as e:
+                    print(f"[Trial Cleanup] Error deleting trial Jellyfin user {trial.get('jellyfin_username')}: {e}")
 
+                # mark trial as expired
+                try:
+                    cur.execute("UPDATE trial_accounts SET expired=1 WHERE discord_id=%s", (trial["discord_id"],))
+                    conn.commit()
+                except Exception as e:
+                    print(f"[Trial Cleanup] Error marking trial expired for {trial['discord_id']}: {e}")
+
+                removed.append(f"{trial.get('jellyfin_username')} (trial)")
+    except Exception as e:
+        print(f"[Trial Cleanup] Error reading trial accounts: {e}")
+    finally:
+        try:
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+
+    # record last run in metadata and cleanup_logs
+    try:
+        set_metadata("last_cleanup", datetime.datetime.utcnow().isoformat())
+    except Exception as e:
+        print(f"[Cleanup] Failed to set last_cleanup metadata: {e}")
+
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
+        )
+        cur = conn.cursor()
+        cur.execute("INSERT INTO cleanup_logs (run_at) VALUES (%s)", (datetime.datetime.utcnow(),))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[Cleanup] Failed to insert cleanup_logs: {e}")
+
+    # post results to sync channel if anything removed
     if removed:
-        print(f"Cleanup removed {len(removed)} accounts: {removed}")
+        msg = f"🧹 Removed {len(removed)} Jellyfin accounts: {', '.join(removed)}"
+        print(msg)
+        try:
+            log_channel = bot.get_channel(SYNC_LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(msg)
+        except Exception as e:
+            print(f"[Cleanup] Failed to send removed message to sync channel: {e}")
 
 
 @tasks.loop(hours=1)
@@ -925,8 +1076,6 @@ async def check_for_updates():
                     log_event(f"Latest Version:'{latest_version}', Current Version: '{BOT_VERSION}'")
     except Exception as e:
         print(f"[Update Check] Failed: {e}")
-
-
 
 
 @bot.event
