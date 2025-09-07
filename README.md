@@ -2,8 +2,8 @@
 
 ![image](https://cdn.pengucc.com/images/projects/jellycord/readme/BannerRound.png)
 
-[![Online Members](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscordapp.com%2Fapi%2Finvites%2FBkmEarDQxq%3Fwith_counts%3Dtrue&query=approximate_presence_count&style=for-the-badge&logo=discord&logoColor=white&label=ONLINE%20MEMBERS&labelColor=grey&color=239eda)](https://discord.gg/BkmEarDQxq)
-![Latest Version:](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FPenguCCN%2FJellycord%2Fmain%2Fversion.json&query=%24.version&style=for-the-badge&logo=python&logoColor=white&color=239eda)
+[![Online Members](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscordapp.com%2Fapi%2Finvites%2FBkmEarDQxq%3Fwith_counts%3Dtrue&query=approximate_presence_count&style=for-the-badge&logo=discord&logoColor=white&label=ONLINE%20MEMBERS&labelColor=grey&color=239eda)](https://discord.gg/EdPJAhrDq8)
+![Latest Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FPenguCCN%2FJellycord%2Fmain%2Fversion.json&query=%24.version&style=for-the-badge&logo=python&logoColor=white&label=Latest%20Version%3A&color=239eda)
 
 Allow the creation and management of Jellyfin users via Discord
 
