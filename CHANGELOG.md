@@ -1,6 +1,7 @@
 # 1.0.4
 
 - Multi-Guild support (As long as a user has a required role or admin role in one server, they are able to use the bot and Jellyfin)
+- Fixed link command instructions not updating based on Jellyseerr availability
 
 # 1.0.3
 

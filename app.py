@@ -913,6 +913,11 @@ async def help_command(ctx):
 
     # Admin commands
     if is_admin:
+        # Dynamic link command line
+        link_command = f"`{PREFIX}link <jellyfin_username> @user` - Manually link accounts"
+        if JELLYSEERR_ENABLED:
+            link_command = f"`{PREFIX}link <jellyfin_username> @user <Jellyseerr ID>` - Manually link accounts with Jellyseerr"
+
         embed.add_field(name="Admin Commands", value=(
             f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
             f"`{PREFIX}listvalidusers` - Show number of valid and invalid accounts\n"
@@ -920,9 +925,10 @@ async def help_command(ctx):
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
             f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
-            f"`{PREFIX}link <jellyfin_username> @user` - Manually link accounts\n"
+            f"{link_command}\n"
             f"`{PREFIX}unlink @user` - Manually unlink accounts\n"
         ), inline=False)
+
         embed.add_field(name="Admin Bot Commands", value=(
             f"`{PREFIX}setprefix` - Change the bot's command prefix\n"
             f"`{PREFIX}updates` - Manually check for bot updates\n"
