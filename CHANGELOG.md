@@ -1,3 +1,7 @@
+# 1.0.5
+
+- Added Timezone support in .env
+
 # 1.0.4
 
 - Multi-Guild support (As long as a user has a required role or admin role in one server, they are able to use the bot and Jellyfin)
