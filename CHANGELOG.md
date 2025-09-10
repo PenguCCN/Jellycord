@@ -1,3 +1,7 @@
+# 1.0.6
+
+- Added Progress bar to Active Streams
+
 # 1.0.5
 
 - Added Timezone support in .env

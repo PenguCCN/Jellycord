@@ -830,7 +830,7 @@ async def scanlibraries(ctx):
 
 @bot.command()
 async def activestreams(ctx):
-    """Admin-only: Show currently active Jellyfin user streams (movies/episodes only) with progress."""
+    """Admin-only: Show currently active Jellyfin user streams (movies/episodes only) with progress bar."""
     if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
@@ -869,13 +869,20 @@ async def activestreams(ctx):
             # Get progress
             try:
                 position_ticks = session.get("PlayState", {}).get("PositionTicks", 0)
-                runtime_ticks = media.get("RunTimeTicks", 1)  # fallback to avoid division by zero
-                # Convert ticks to seconds (1 tick = 100 ns)
+                runtime_ticks = media.get("RunTimeTicks", 1)  # avoid div by zero
                 position_seconds = position_ticks / 10_000_000
                 runtime_seconds = runtime_ticks / 10_000_000
+
                 position_str = str(datetime.timedelta(seconds=int(position_seconds)))
                 runtime_str = str(datetime.timedelta(seconds=int(runtime_seconds)))
-                progress_str = f"[{position_str} / {runtime_str}]"
+
+                # Progress bar
+                percent = position_seconds / runtime_seconds if runtime_seconds > 0 else 0
+                bar_length = 10
+                filled_length = int(round(bar_length * percent))
+                bar = "■" * filled_length + "□" * (bar_length - filled_length)
+
+                progress_str = f"{bar} {int(percent*100)}%\n[{position_str} / {runtime_str}]"
             except Exception:
                 progress_str = "Unknown"
 
