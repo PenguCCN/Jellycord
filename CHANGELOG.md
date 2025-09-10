@@ -1,6 +1,7 @@
 # 1.0.6
 
 - Added Progress bar to Active Streams
+- Added JFA-Go support for external invites
 
 # 1.0.5
 

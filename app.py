@@ -37,6 +37,9 @@ JELLYSEERR_ENABLED = os.getenv("JELLYSEERR_ENABLED", "false").lower() == "true"
 JELLYSEERR_URL = os.getenv("JELLYSEERR_URL", "").rstrip("/")
 JELLYSEERR_API_KEY = os.getenv("JELLYSEERR_API_KEY", "")
 
+JFA_URL = os.getenv("JFA_URL")
+JFA_API_KEY = os.getenv("JFA_API_KEY")
+
 DB_HOST = get_env_var("DB_HOST")
 DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
@@ -480,6 +483,235 @@ async def createaccount(ctx, username: str = None, password: str = None):
             await ctx.send(f"✅ Jellyfin account **{username}** created!\n🌐 Login here: {JELLYFIN_URL}")
     else:
         await ctx.send(f"❌ Failed to create Jellyfin account **{username}**. It may already exist.")
+
+@bot.command()
+async def createinvite(ctx):
+    """Admin-only: Create a new JFA-Go invite link (create -> fetch latest invite)."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        payload = {"days": 7, "max_uses": 1}
+        base = JFA_URL.rstrip("/")
+
+        # Try Bearer, fallback to X-Api-Key
+        headers = {"Authorization": f"Bearer {JFA_API_KEY}"}
+        r = requests.post(f"{base}/invites", headers=headers, json=payload, timeout=10)
+        if r.status_code == 401:
+            headers = {"X-Api-Key": JFA_API_KEY}
+            r = requests.post(f"{base}/invites", headers=headers, json=payload, timeout=10)
+
+        if r.status_code not in (200, 201):
+            await ctx.send(f"❌ Failed to create invite. Status code: {r.status_code}\nResponse: {r.text}")
+            return
+
+        # Fetch invites list (some JFA builds only return success on POST)
+        r2 = requests.get(f"{base}/invites", headers=headers, timeout=10)
+        if r2.status_code not in (200, 201):
+            await ctx.send(f"❌ Failed to fetch invite list. Status code: {r2.status_code}\nResponse: {r2.text}")
+            return
+
+        invites_resp = r2.json()
+        # Normalize different shapes: either {'invites': [...]} or a list
+        if isinstance(invites_resp, dict) and "invites" in invites_resp:
+            invites_list = invites_resp["invites"]
+        elif isinstance(invites_resp, list):
+            invites_list = invites_resp
+        else:
+            # unexpected shape
+            print(f"[createinvite] Unexpected invites response shape: {invites_resp}")
+            await ctx.send("❌ Unexpected response from JFA when fetching invites. Check bot logs.")
+            return
+
+        if not invites_list:
+            await ctx.send("❌ No invites found after creation.")
+            return
+
+        latest = invites_list[-1]  # assume newest is last; adjust if your JFA sorts differently
+        print(f"[createinvite] Latest invite object: {latest}")  # debug log
+
+        code = latest.get("code") or latest.get("id") or latest.get("token")
+        url = latest.get("url") or latest.get("link")
+        if not url and code:
+            # Common invite URL pattern; adjust if your instance is different
+            url = f"{base}/invite/{code}"
+
+        # created: JFA gives epoch seconds in 'created'
+        created_local_str = None
+        created_ts = latest.get("created")
+        if created_ts:
+            try:
+                created_dt = datetime.datetime.utcfromtimestamp(int(created_ts)).replace(tzinfo=datetime.timezone.utc)
+                created_local = created_dt.astimezone(LOCAL_TZ)
+                created_local_str = created_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                created_local_str = None
+
+        remaining = latest.get("remaining-uses", "N/A")
+
+        embed = discord.Embed(
+            title="🎟️ New Jellyfin Invite Created",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Code", value=f"`{code}`" if code else "N/A", inline=True)
+        embed.add_field(name="Link", value=f"[Click here]({url})" if url else "N/A", inline=True)
+
+        footer_parts = []
+        if created_local_str:
+            footer_parts.append(f"Created: {created_local_str}")
+        footer_parts.append(f"Remaining uses: {remaining}")
+        embed.set_footer(text=" • ".join(footer_parts))
+        embed.set_author(name=f"Created by {ctx.author.display_name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error creating invite: {e}")
+        print(f"[createinvite] Error: {e}", exc_info=True)
+
+
+@bot.command()
+async def listinvites(ctx):
+    """Admin-only: List all active JFA-Go invites."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        base = JFA_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {JFA_API_KEY}"}
+        r = requests.get(f"{base}/invites", headers=headers, timeout=10)
+
+        if r.status_code == 401:
+            headers = {"X-Api-Key": JFA_API_KEY}
+            r = requests.get(f"{base}/invites", headers=headers, timeout=10)
+
+        if r.status_code not in (200, 201):
+            await ctx.send(f"❌ Failed to fetch invites. Status code: {r.status_code}\nResponse: {r.text}")
+            return
+
+        invites_resp = r.json()
+        print(f"[listinvites] Raw response: {invites_resp}")  # Debug
+
+        # Normalize to a list of invite dicts
+        if isinstance(invites_resp, dict) and "invites" in invites_resp:
+            invites_list = invites_resp["invites"]
+        elif isinstance(invites_resp, list):
+            invites_list = invites_resp
+        else:
+            await ctx.send("❌ Unexpected invite response format. Check logs.")
+            return
+
+        if not invites_list:
+            await ctx.send("ℹ️ No active invites found.")
+            return
+
+        embed = discord.Embed(
+            title="📋 Active Jellyfin Invites",
+            color=discord.Color.green()
+        )
+
+        for invite in invites_list:
+            code = invite.get("code")
+            url = f"{base}/invite/{code}" if code else None
+            remaining = invite.get("remaining-uses", "N/A")
+
+            created_str = None
+            created_ts = invite.get("created")
+            if created_ts:
+                try:
+                    created_dt = datetime.datetime.utcfromtimestamp(int(created_ts)).replace(tzinfo=datetime.timezone.utc)
+                    created_local = created_dt.astimezone(LOCAL_TZ)
+                    created_str = created_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    created_str = None
+
+            value = f"Uses left: {remaining}"
+            if url:
+                value += f"\n[Invite Link]({url})"
+            if created_str:
+                value += f"\nCreated: {created_str}"
+
+            embed.add_field(
+                name=f"🔑 {code}",
+                value=value,
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching invites: {e}")
+        print(f"[listinvites] Error: {e}", exc_info=True)
+
+@bot.command()
+async def deleteinvite(ctx, code: str):
+    """Admin-only: Delete a specific JFA-Go invite by code."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        base = JFA_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {JFA_API_KEY}"}
+
+        # Try DELETE with body (legacy API)
+        r = requests.delete(f"{base}/invites", headers=headers, json={"code": code}, timeout=10)
+        if r.status_code == 401:
+            headers = {"X-Api-Key": JFA_API_KEY}
+            r = requests.delete(f"{base}/invites", headers=headers, json={"code": code}, timeout=10)
+
+        if r.status_code in (200, 204):
+            await ctx.send(f"✅ Invite `{code}` has been deleted.")
+        else:
+            await ctx.send(f"❌ Failed to delete invite `{code}`. Status code: {r.status_code}\nResponse: {r.text}")
+
+    except Exception as e:
+        await ctx.send(f"❌ Error deleting invite: {e}")
+        print(f"[deleteinvite] Error: {e}", exc_info=True)
+
+
+@bot.command()
+async def clearinvites(ctx):
+    """Admin-only: Delete ALL JFA-Go invites (use with caution!)."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        base = JFA_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {JFA_API_KEY}"}
+        r = requests.get(f"{base}/invites", headers=headers, timeout=10)
+        if r.status_code == 401:
+            headers = {"X-Api-Key": JFA_API_KEY}
+            r = requests.get(f"{base}/invites", headers=headers, timeout=10)
+
+        if r.status_code not in (200, 201):
+            await ctx.send(f"❌ Failed to fetch invites. Status code: {r.status_code}\nResponse: {r.text}")
+            return
+
+        invites_resp = r.json()
+        invites_list = invites_resp["invites"] if isinstance(invites_resp, dict) and "invites" in invites_resp else invites_resp
+        if not invites_list:
+            await ctx.send("ℹ️ No invites to delete.")
+            return
+
+        deleted = 0
+        for invite in invites_list:
+            code = invite.get("code")
+            if not code:
+                continue
+            dr = requests.delete(f"{base}/invites", headers=headers, json={"code": code}, timeout=10)
+            if dr.status_code in (200, 204):
+                deleted += 1
+
+        await ctx.send(f"✅ Deleted {deleted} invites.")
+
+    except Exception as e:
+        await ctx.send(f"❌ Error clearing invites: {e}")
+        print(f"[clearinvites] Error: {e}", exc_info=True)
+
 
 @bot.command()
 async def trialaccount(ctx, username: str = None, password: str = None):
