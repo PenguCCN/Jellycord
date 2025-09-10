@@ -713,7 +713,9 @@ async def lastcleanup(ctx):
         return
 
     last_run_dt_utc = datetime.datetime.fromisoformat(last_run)
-    last_run_local = pytz.utc.localize(last_run_dt_utc).astimezone(LOCAL_TZ)
+    if last_run_dt_utc.tzinfo is None:
+        last_run_dt_utc = pytz.utc.localize(last_run_dt_utc)
+    last_run_local = last_run_dt_utc.astimezone(LOCAL_TZ)
     now_local = datetime.datetime.now(LOCAL_TZ)
     next_run_local = last_run_local + datetime.timedelta(hours=24)
     time_remaining = next_run_local - now_local
@@ -1115,7 +1117,9 @@ async def on_ready():
         # parse UTC timestamp from DB
         last_run_dt_utc = datetime.datetime.fromisoformat(last_run)
         # convert to local timezone
-        last_run_local = pytz.utc.localize(last_run_dt_utc).astimezone(LOCAL_TZ)
+        if last_run_dt_utc.tzinfo is None:
+            last_run_dt_utc = pytz.utc.localize(last_run_dt_utc)
+        last_run_local = last_run_dt_utc.astimezone(LOCAL_TZ)
         now_local = datetime.datetime.now(LOCAL_TZ)
         delta = now_local - last_run_local
         if delta.total_seconds() >= 24 * 3600:
