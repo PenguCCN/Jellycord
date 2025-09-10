@@ -1031,7 +1031,7 @@ async def help_command(ctx):
     user_cmds = [
         f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account",
         f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
-        f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account"
+        f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account",
         f"`{PREFIX}what2watch` - Lists 5 random movie suggestions from the Jellyfin Library"
     ]
 
