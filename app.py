@@ -44,7 +44,7 @@ DB_NAME = get_env_var("DB_NAME")
 
 LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "America/Chicago")
 
-BOT_VERSION = "1.0.4"
+BOT_VERSION = "1.0.5"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 
@@ -829,6 +829,70 @@ async def scanlibraries(ctx):
 
 
 @bot.command()
+async def activestreams(ctx):
+    """Admin-only: Show currently active Jellyfin user streams (movies/episodes only) with progress."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    headers = {"X-Emby-Token": JELLYFIN_API_KEY}
+    try:
+        r = requests.get(f"{JELLYFIN_URL}/Sessions", headers=headers, timeout=10)
+        if r.status_code != 200:
+            await ctx.send(f"❌ Failed to fetch active streams. Status code: {r.status_code}")
+            return
+
+        sessions = r.json()
+        # Only keep sessions that are actively playing a Movie or Episode
+        active_streams = [
+            s for s in sessions
+            if s.get("NowPlayingItem") and s["NowPlayingItem"].get("Type") in ("Movie", "Episode")
+        ]
+
+        if not active_streams:
+            await ctx.send("ℹ️ No active movie or episode streams at the moment.")
+            return
+
+        embed = discord.Embed(
+            title="📺 Active Jellyfin Streams",
+            description=f"Currently {len(active_streams)} active stream(s):",
+            color=discord.Color.green()
+        )
+
+        for session in active_streams:
+            user_name = session.get("UserName", "Unknown User")
+            device = session.get("DeviceName", "Unknown Device")
+            media = session.get("NowPlayingItem", {})
+            media_type = media.get("Type", "Unknown")
+            media_name = media.get("Name", "Unknown Title")
+
+            # Get progress
+            try:
+                position_ticks = session.get("PlayState", {}).get("PositionTicks", 0)
+                runtime_ticks = media.get("RunTimeTicks", 1)  # fallback to avoid division by zero
+                # Convert ticks to seconds (1 tick = 100 ns)
+                position_seconds = position_ticks / 10_000_000
+                runtime_seconds = runtime_ticks / 10_000_000
+                position_str = str(datetime.timedelta(seconds=int(position_seconds)))
+                runtime_str = str(datetime.timedelta(seconds=int(runtime_seconds)))
+                progress_str = f"[{position_str} / {runtime_str}]"
+            except Exception:
+                progress_str = "Unknown"
+
+            embed.add_field(
+                name=f"{media_name} ({media_type})",
+                value=f"👤 {user_name}\n📱 {device}\n⏱ Progress: {progress_str}",
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching active streams: {e}")
+        print(f"[activestreams] Error: {e}")
+
+
+@bot.command()
 async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js_id: str = None):
     log_event(f"link invoked by {ctx.author}")
     usage_args = ["<Jellyfin Account>", "<@user>"]
@@ -991,6 +1055,7 @@ async def help_command(ctx):
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
             f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
             f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
+            f"`{PREFIX}activestreams` - View all Active Jellyfin streams\n"
             f"{link_command}\n"
             f"`{PREFIX}unlink @user` - Manually unlink accounts\n"
         ), inline=False)

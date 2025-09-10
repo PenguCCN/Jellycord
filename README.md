@@ -57,6 +57,7 @@ Fill out values in the .env and you're good to go!
 - `!searchaccount` <jellyfin_username> - Find linked Discord user
 - `!searchdiscord` @user - Find linked Jellyfin account
 - `!scanlibraries` - Scan all Jellyfin libraries
+- `!activestreams` - View all Active Jellyfin streams
 - `!link` <jellyfin_username> @user - Manually link accounts
 - `!unlink` @user - Manually unlink accounts
 

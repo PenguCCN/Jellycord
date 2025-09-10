@@ -2,6 +2,7 @@
 
 - Added Timezone support in .env
 - Added the `what2watch` command. Lists 5 random movie suggestions from the Jellyfin Library
+- Added `activestreams` command. Lists all active Jellyfin Streams
 
 # 1.0.4
 
