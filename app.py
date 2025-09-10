@@ -5,6 +5,7 @@ import mysql.connector
 import asyncio
 import os
 from dotenv import load_dotenv
+import pytz
 
 # =====================
 # ENV + VALIDATION
@@ -40,6 +41,8 @@ DB_USER = get_env_var("DB_USER")
 DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
+LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "America/Chicago")
+
 BOT_VERSION = "1.0.4"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
@@ -50,8 +53,10 @@ RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 EVENT_LOGGING = os.getenv("EVENT_LOGGING", "false").lower() == "true"
 
 def log_event(message: str):
+    """Log events to console if enabled in .env."""
     if EVENT_LOGGING:
-        print(f"[EVENT] {datetime.datetime.utcnow().isoformat()} | {message}")
+        now_local = datetime.datetime.now(LOCAL_TZ)
+        print(f"[EVENT] {now_local.isoformat()} | {message}")
 
 # =====================
 # DISCORD SETUP
@@ -707,15 +712,19 @@ async def lastcleanup(ctx):
         await ctx.send("ℹ️ No cleanup has been run yet.")
         return
 
-    last_run_dt = datetime.datetime.fromisoformat(last_run)
-    now = datetime.datetime.utcnow()
-    next_run_dt = last_run_dt + datetime.timedelta(hours=24)
-    time_remaining = next_run_dt - now
+    last_run_dt_utc = datetime.datetime.fromisoformat(last_run)
+    last_run_local = pytz.utc.localize(last_run_dt_utc).astimezone(LOCAL_TZ)
+    now_local = datetime.datetime.now(LOCAL_TZ)
+    next_run_local = last_run_local + datetime.timedelta(hours=24)
+    time_remaining = next_run_local - now_local
 
     hours, remainder = divmod(int(time_remaining.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
 
-    await ctx.send(f"🧹 Last cleanup ran at **{last_run_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC**\n⏳ Time until next cleanup: {hours}h {minutes}m {seconds}s")
+    await ctx.send(
+        f"🧹 Last cleanup ran at **{last_run_local.strftime('%Y-%m-%d %H:%M:%S %Z')}**\n"
+        f"⏳ Time until next cleanup: {hours}h {minutes}m {seconds}s"
+    )
 
 
 @bot.command()
@@ -941,32 +950,31 @@ async def help_command(ctx):
 # TASKS
 # =====================
 import datetime
+import pytz
+
+import datetime
+import pytz
+import mysql.connector
+
+LOCAL_TZ = pytz.timezone(os.getenv("LOCAL_TZ", "America/Chicago"))
 
 @tasks.loop(hours=24)
-async def daily_check():
-    log_event("Running daily account cleanup check...")
+async def cleanup_task():
+    log_event("🧹 Running daily account cleanup check...")
     removed = []
 
+    # =======================
     # Normal accounts cleanup
-    for row in get_accounts():
-        # safe unpacking in case schema varies
-        discord_id = row[0]
-        jf_username = row[1] if len(row) > 1 else None
-        jf_id = row[2] if len(row) > 2 else None
-        js_id = row[3] if len(row) > 3 else None
-
-        # find the member across configured guilds
+    # =======================
+    for discord_id, jf_username, jf_id, js_id in get_accounts():
         member = None
         for gid in GUILD_IDS:
             guild = bot.get_guild(gid)
-            if not guild:
-                continue
-            candidate = guild.get_member(discord_id)
-            if candidate:
-                member = candidate
-                break
+            if guild:
+                member = guild.get_member(discord_id)
+                if member:
+                    break
 
-        # if no member found or member doesn't have a required role -> delete account
         if member is None or not has_required_role(member):
             if jf_username:
                 try:
@@ -983,7 +991,7 @@ async def daily_check():
             except Exception as e:
                 print(f"[Cleanup] Error removing DB entry for Discord ID {discord_id}: {e}")
 
-            # remove from Jellyseerr if we have an id and integration enabled
+            # remove from Jellyseerr if applicable
             if JELLYSEERR_ENABLED and js_id:
                 try:
                     if delete_jellyseerr_user(js_id):
@@ -995,7 +1003,9 @@ async def daily_check():
 
             removed.append(jf_username or f"{discord_id}")
 
-    # Trial accounts cleanup (persistent history table)
+    # ======================
+    # Trial accounts cleanup
+    # ======================
     try:
         conn = mysql.connector.connect(
             host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
@@ -1003,21 +1013,27 @@ async def daily_check():
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT * FROM trial_accounts WHERE expired=0")
         trials = cur.fetchall()
+        now_local = datetime.datetime.now(LOCAL_TZ)
 
         for trial in trials:
-            created_at = trial.get("trial_created_at") or trial.get("created_at")  # compatibility
-            if not created_at:
+            created_at_utc = trial.get("trial_created_at") or trial.get("created_at")
+            if not created_at_utc:
                 continue
 
-            # created_at is a datetime from the DB (cursor dictionary=True)
-            if datetime.datetime.utcnow() > created_at + datetime.timedelta(hours=24):
-                # delete from Jellyfin (best-effort)
+            # Convert DB UTC time to local TZ
+            if created_at_utc.tzinfo is None:
+                created_at_local = pytz.utc.localize(created_at_utc).astimezone(LOCAL_TZ)
+            else:
+                created_at_local = created_at_utc.astimezone(LOCAL_TZ)
+
+            if now_local > created_at_local + datetime.timedelta(hours=24):
+                # Delete trial Jellyfin user
                 try:
                     delete_jellyfin_user(trial.get("jellyfin_username"))
                 except Exception as e:
                     print(f"[Trial Cleanup] Error deleting trial Jellyfin user {trial.get('jellyfin_username')}: {e}")
 
-                # mark trial as expired
+                # Mark trial as expired
                 try:
                     cur.execute("UPDATE trial_accounts SET expired=1 WHERE discord_id=%s", (trial["discord_id"],))
                     conn.commit()
@@ -1034,9 +1050,11 @@ async def daily_check():
         except Exception:
             pass
 
-    # record last run in metadata and cleanup_logs
+    # ======================
+    # Update metadata & logs
+    # ======================
     try:
-        set_metadata("last_cleanup", datetime.datetime.utcnow().isoformat())
+        set_metadata("last_cleanup", datetime.datetime.now(LOCAL_TZ).isoformat())
     except Exception as e:
         print(f"[Cleanup] Failed to set last_cleanup metadata: {e}")
 
@@ -1045,14 +1063,16 @@ async def daily_check():
             host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
         )
         cur = conn.cursor()
-        cur.execute("INSERT INTO cleanup_logs (run_at) VALUES (%s)", (datetime.datetime.utcnow(),))
+        cur.execute("INSERT INTO cleanup_logs (run_at) VALUES (%s)", (datetime.datetime.now(LOCAL_TZ),))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         print(f"[Cleanup] Failed to insert cleanup_logs: {e}")
 
-    # post results to sync channel if anything removed
+    # ============================
+    # Post results to sync channel
+    # ============================
     if removed:
         msg = f"🧹 Removed {len(removed)} Jellyfin accounts: {', '.join(removed)}"
         print(msg)
@@ -1092,15 +1112,27 @@ async def on_ready():
     # Check last cleanup
     last_run = get_metadata("last_cleanup")
     if last_run:
-        last_run_dt = datetime.datetime.fromisoformat(last_run)
-        now = datetime.datetime.utcnow()
-        delta = now - last_run_dt
+        # parse UTC timestamp from DB
+        last_run_dt_utc = datetime.datetime.fromisoformat(last_run)
+        # convert to local timezone
+        last_run_local = pytz.utc.localize(last_run_dt_utc).astimezone(LOCAL_TZ)
+        now_local = datetime.datetime.now(LOCAL_TZ)
+        delta = now_local - last_run_local
         if delta.total_seconds() >= 24 * 3600:
             print("Running missed daily cleanup...")
-            await daily_check()  # Run immediately if overdue
+            await cleanup_task()  # run immediately if overdue
 
-    daily_check.start()
-    check_for_updates.start()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{PREFIX}help"))
+    # Start scheduled tasks
+    if not cleanup_task.is_running():
+        cleanup_task.start()
+
+    if not check_for_updates.is_running():
+        check_for_updates.start()
+
+    await bot.change_presence(
+        activity=discord.Activity(type=discord.ActivityType.watching, name=f"{PREFIX}help")
+    )
+
+    log_event(f"✅ Bot ready. Current time: {datetime.datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 bot.run(TOKEN)
