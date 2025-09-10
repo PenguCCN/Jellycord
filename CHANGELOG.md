@@ -1,6 +1,7 @@
 # 1.0.5
 
 - Added Timezone support in .env
+- Added the `what2watch` command. Lists 5 random movie suggestions from the Jellyfin Library
 
 # 1.0.4
 

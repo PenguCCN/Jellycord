@@ -6,6 +6,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import pytz
+import random
 
 # =====================
 # ENV + VALIDATION
@@ -615,6 +616,59 @@ async def deleteaccount(ctx, username: str = None):
     else:
         await ctx.send(f"❌ Failed to delete Jellyfin account **{username}**.")
 
+@bot.command()
+async def what2watch(ctx):
+    """Pick 5 random movies from the Jellyfin library with embeds and posters."""
+    member = ctx.guild.get_member(ctx.author.id) if ctx.guild else None
+    if not member or not has_required_role(member):
+        await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role to use this command.")
+        return
+
+    headers = {"X-Emby-Token": JELLYFIN_API_KEY}
+    try:
+        # Fetch all movies
+        r = requests.get(f"{JELLYFIN_URL}/Items?IncludeItemTypes=Movie&Recursive=true", headers=headers, timeout=10)
+        if r.status_code != 200:
+            await ctx.send(f"❌ Failed to fetch movies. Status code: {r.status_code}")
+            return
+
+        movies = r.json().get("Items", [])
+        if not movies:
+            await ctx.send("⚠️ No movies found in the library.")
+            return
+
+        # Pick 5 random movies
+        selection = random.sample(movies, min(5, len(movies)))
+
+        embed = discord.Embed(
+            title="🎬 What to Watch",
+            description="Here are 5 random movie suggestions from the library:",
+            color=discord.Color.blue()
+        )
+
+        for movie in selection:
+            name = movie.get("Name")
+            year = movie.get("ProductionYear", "N/A")
+            runtime = movie.get("RunTimeTicks", None)
+            runtime_min = int(runtime / 10_000_000 / 60) if runtime else "N/A"
+            
+            # Poster URL if available
+            poster_url = None
+            if "PrimaryImageTag" in movie and movie["PrimaryImageTag"]:
+                poster_url = f"{JELLYFIN_URL}/Items/{movie['Id']}/Images/Primary?tag={movie['PrimaryImageTag']}&quality=90"
+
+            field_value = f"Year: {year}\nRuntime: {runtime_min} min"
+            embed.add_field(name=name, value=field_value, inline=False)
+            
+            if poster_url:
+                embed.set_image(url=poster_url)  # Only last movie's poster will appear as main embed image
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching movies: {e}")
+        print(f"[what2watch] Error: {e}")
+
 
 @bot.command()
 async def cleanup(ctx):
@@ -914,6 +968,7 @@ async def help_command(ctx):
         f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account",
         f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
         f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account"
+        f"`{PREFIX}what2watch` - Lists 5 random movie suggestions from the Jellyfin Library"
     ]
 
     # Only show trialaccount if enabled
