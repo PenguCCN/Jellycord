@@ -4,3 +4,4 @@ mysql-connector-python==9.0.0
 python-dotenv==1.0.1
 pytz==2025.2
 apscheduler==3.11.0
+qbittorrent-api==2025.7.0

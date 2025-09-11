@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 import pytz
 import random
+import qbittorrentapi
 
 # =====================
 # ENV + VALIDATION
@@ -37,8 +38,14 @@ JELLYSEERR_ENABLED = os.getenv("JELLYSEERR_ENABLED", "false").lower() == "true"
 JELLYSEERR_URL = os.getenv("JELLYSEERR_URL", "").rstrip("/")
 JELLYSEERR_API_KEY = os.getenv("JELLYSEERR_API_KEY", "")
 
+ENABLE_JFA = os.getenv("ENABLE_JFA", "False").lower() == "true"
 JFA_URL = os.getenv("JFA_URL")
 JFA_API_KEY = os.getenv("JFA_API_KEY")
+
+ENABLE_QBITTORRENT = os.getenv("ENABLE_QBITTORRENT", "False").lower() == "true"
+QBIT_HOST = os.getenv("QBIT_HOST")
+QBIT_USERNAME = os.getenv("QBIT_USERNAME")
+QBIT_PASSWORD = os.getenv("QBIT_PASSWORD")
 
 DB_HOST = get_env_var("DB_HOST")
 DB_USER = get_env_var("DB_USER")
@@ -47,7 +54,7 @@ DB_NAME = get_env_var("DB_NAME")
 
 LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "America/Chicago")
 
-BOT_VERSION = "1.0.5"
+BOT_VERSION = "1.0.6"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 
@@ -69,6 +76,20 @@ intents = discord.Intents.all()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+
+# =====================
+# QBITTORRENT SETUP
+# =====================
+
+qb = qbittorrentapi.Client(
+    host=QBIT_HOST,
+    username=QBIT_USERNAME,
+    password=QBIT_PASSWORD
+)
+try:
+    qb.auth_log_in()
+except qbittorrentapi.LoginFailed:
+    print("Failed to log in to qBittorrent API")
 
 # =====================
 # DATABASE SETUP
@@ -316,6 +337,16 @@ def delete_jellyseerr_user(js_id: str) -> bool:
     except Exception as e:
         print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
         return False
+    
+# =====================
+# QBITTORRENT HELPERS
+# =====================
+
+def progress_bar(progress: float, length: int = 20) -> str:
+    """Return a textual progress bar for the embed."""
+    filled_length = int(length * progress)
+    bar = '█' * filled_length + '░' * (length - filled_length)
+    return f"[{bar}] {progress*100:.2f}%"
 
 # =====================
 # DISCORD HELPERS
@@ -487,6 +518,10 @@ async def createaccount(ctx, username: str = None, password: str = None):
 @bot.command()
 async def createinvite(ctx):
     """Admin-only: Create a new JFA-Go invite link (create -> fetch latest invite)."""
+    if not ENABLE_JFA:
+        await ctx.send("❌ JFA support is not enabled in the bot configuration.")
+        return
+
     if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
@@ -574,6 +609,10 @@ async def createinvite(ctx):
 @bot.command()
 async def listinvites(ctx):
     """Admin-only: List all active JFA-Go invites."""
+    if not ENABLE_JFA:
+        await ctx.send("❌ JFA support is not enabled in the bot configuration.")
+        return
+
     if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
         return
@@ -1130,6 +1169,61 @@ async def activestreams(ctx):
         await ctx.send(f"❌ Error fetching active streams: {e}")
         print(f"[activestreams] Error: {e}")
 
+@bot.command()
+async def qbview(ctx):
+    """Admin-only: View current qBittorrent downloads."""
+    if not ENABLE_QBITTORRENT:
+        await ctx.send("❌ qBittorrent support is not enabled in the bot configuration.")
+        return
+    
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+    
+    torrents = qb.torrents_info()
+    embed = discord.Embed(title="qBittorrent Downloads", color=0x00ff00)
+
+    if not torrents:
+        embed.description = "No torrents found."
+        await ctx.send(embed=embed)
+        return
+
+    # Group torrents by state
+    state_groups = {
+        "Downloading / Uploading": [],
+        "Finished": [],
+        "Stalled": [],
+        "Checking / Metadata": [],
+        "Other": []
+    }
+
+    for t in torrents:
+        if t.state in ("downloading", "uploading"):
+            state_groups["Downloading / Uploading"].append(t)
+        elif t.state in ("completed", "pausedUP", "pausedDL"):
+            state_groups["Finished"].append(t)
+        elif t.state in ("stalledUP", "stalledDL"):
+            state_groups["Stalled"].append(t)
+        elif t.state in ("checkingUP", "checkingDL", "checking", "metaDL"):
+            state_groups["Checking / Metadata"].append(t)
+        else:
+            state_groups["Other"].append(t)
+
+    # Add torrents to embed
+    for group_name, torrents_list in state_groups.items():
+        if torrents_list:
+            value_text = ""
+            for torrent in torrents_list:
+                value_text += (
+                    f"{torrent.name}\n"
+                    f"{progress_bar(torrent.progress)}\n"
+                    f"Peers: {torrent.num_leechs} | Seeders: {torrent.num_seeds}\n"
+                    f"Status: {torrent.state}\n\n"
+                )
+            embed.add_field(name=group_name, value=value_text, inline=False)
+
+    await ctx.send(embed=embed)
+
 
 @bot.command()
 async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js_id: str = None):
@@ -1266,46 +1360,70 @@ async def help_command(ctx):
         color=discord.Color.blue()
     )
 
-    # User commands
+    # --- Jellyfin User Commands ---
     user_cmds = [
         f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account",
         f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
         f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account",
         f"`{PREFIX}what2watch` - Lists 5 random movie suggestions from the Jellyfin Library"
     ]
-
-    # Only show trialaccount if enabled
     if ENABLE_TRIAL_ACCOUNTS:
         user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a 24-hour trial Jellyfin account")
+    
+    embed.add_field(name="🎬 Jellyfin Commands", value="\n".join(user_cmds), inline=False)
 
-    embed.add_field(name="User Commands", value="\n".join(user_cmds), inline=False)
+    # --- Bot Commands ---
+    bot_cmds = [
+        f"`{PREFIX}help` - Show this help message"
+    ]
+    embed.add_field(name="🤖 Bot Commands", value="\n".join(bot_cmds), inline=False)
 
-    # Admin commands
+    # --- Admin Commands ---
     if is_admin:
-        # Dynamic link command line
+        # Admin Jellyfin commands
         link_command = f"`{PREFIX}link <jellyfin_username> @user` - Manually link accounts"
         if JELLYSEERR_ENABLED:
-            link_command = f"`{PREFIX}link <jellyfin_username> @user <Jellyseerr ID>` - Manually link accounts with Jellyseerr"
+            link_command = f"`{PREFIX}link <jellyfin_username> @user <Jellyseerr ID>` - Link accounts with Jellyseerr"
 
-        embed.add_field(name="Admin Commands", value=(
-            f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles\n"
-            f"`{PREFIX}listvalidusers` - Show number of valid and invalid accounts\n"
-            f"`{PREFIX}lastcleanup` - See Last cleanup time, and time remaining before next cleanup\n"
-            f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user\n"
-            f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account\n"
-            f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries\n"
-            f"`{PREFIX}activestreams` - View all Active Jellyfin streams\n"
-            f"{link_command}\n"
-            f"`{PREFIX}unlink @user` - Manually unlink accounts\n"
-        ), inline=False)
+        admin_cmds = [
+            link_command,
+            f"`{PREFIX}unlink @user` - Manually unlink accounts",
+            f"`{PREFIX}listvalidusers` - Show number of valid and invalid accounts",
+            f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles",
+            f"`{PREFIX}lastcleanup` - See last cleanup time and time remaining",
+            f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user",
+            f"`{PREFIX}searchdiscord @user` - Find linked Jellyfin account",
+            f"`{PREFIX}scanlibraries` - Scan all Jellyfin libraries",
+            f"`{PREFIX}activestreams` - View all active Jellyfin streams"
+        ]
+        embed.add_field(name="🛠️ Admin Commands", value="\n".join(admin_cmds), inline=False)
 
-        embed.add_field(name="Admin Bot Commands", value=(
-            f"`{PREFIX}setprefix` - Change the bot's command prefix\n"
-            f"`{PREFIX}updates` - Manually check for bot updates\n"
-            f"`{PREFIX}logging` - Enable/Disable Console Event Logging\n"
-        ), inline=False)
+    # --- qBittorrent Commands ---
+    if ENABLE_QBITTORRENT:
+        qb_cmds = [
+            f"`{PREFIX}qbview` - Show current qBittorrent downloads with progress, peers, and seeders",
+        ]
+        embed.add_field(name="💾 qBittorrent Commands", value="\n".join(qb_cmds), inline=False)
+
+    # --- JFA Commands ---
+    if ENABLE_JFA:
+        jfa_cmds = [
+            f"`{PREFIX}createinvite` - Create a new JFA invite link",
+            f"`{PREFIX}listinvites` - List all active JFA invite links",
+            f"`{PREFIX}deleteinvite <code>` - Delete a specific JFA invite"
+        ]
+        embed.add_field(name="🔑 JFA Commands", value="\n".join(jfa_cmds), inline=False)
+
+        # Admin Bot commands
+        admin_bot_cmds = [
+            f"`{PREFIX}setprefix` - Change the bot's command prefix",
+            f"`{PREFIX}updates` - Manually check for bot updates",
+            f"`{PREFIX}logging` - Enable/disable console event logging"
+        ]
+        embed.add_field(name="⚙️ Admin Bot Commands", value="\n".join(admin_bot_cmds), inline=False)
 
     await ctx.send(embed=embed)
+
 
 # =====================
 # TASKS

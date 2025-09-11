@@ -44,24 +44,35 @@ Fill out values in the .env and you're good to go!
 
 ![image](https://cdn.pengucc.com/images/projects/jellycord/readme/role-required.png)
 
-***User Commands***
+***🎬 User Commands***
 - `!createaccount` <username> <password> - Create your Jellyfin account
 - `!recoveraccount` <username> <newpassword> - Reset your password
 - `!deleteaccount` <username> - Delete your Jellyfin account
 - `!trialaccount` <username> <password> - Create a 24-hour trial Jellyfin account. Only if ENABLE_TRIAL_ACCOUNTS=True
 - `!what2watch` - Lists 5 random movie suggestions from the Jellyfin Library
+- `!help` - Displays help command
 
-***Admin Commands***
+***🛠️ Admin Commands***
+- `!link` <jellyfin_username> @user - Manually link accounts
+- `!unlink` @user - Manually unlink accounts
+- `!listvalidusers` - Show number of valid and invalid accounts
 - `!cleanup` - Remove Jellyfin accounts from users without roles
 - `!lastcleanup` - See Last cleanup time, and time remaining before next cleanup
 - `!searchaccount` <jellyfin_username> - Find linked Discord user
 - `!searchdiscord` @user - Find linked Jellyfin account
 - `!scanlibraries` - Scan all Jellyfin libraries
 - `!activestreams` - View all Active Jellyfin streams
-- `!link` <jellyfin_username> @user - Manually link accounts
-- `!unlink` @user - Manually unlink accounts
 
-***Admin Bot Commands***
+***💾 qBittorrent Commands***
+- `!qbview` - View current qBittorrent downloads
+
+***🔑 JFA Commands***
+
+- `!createinvite` - Create a new JFA invite link
+- `!listinvites` - List all active JFA invite links
+- `!deleteinvite <code>` - Delete a specific JFA Invite
+
+***⚙️ Admin Bot Commands***
 - `!setprefix` - Change the bots command prefix
 - `!updates` - Manually check for bot updates
 - `!logging` - Enable/Disable Console Event Logging

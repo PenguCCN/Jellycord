@@ -2,6 +2,8 @@
 
 - Added Progress bar to Active Streams
 - Added JFA-Go support for external invites
+- Added qBittorrent Support
+- Reformated Help Command
 
 # 1.0.5
 
