@@ -81,15 +81,23 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 # QBITTORRENT SETUP
 # =====================
 
-qb = qbittorrentapi.Client(
-    host=QBIT_HOST,
-    username=QBIT_USERNAME,
-    password=QBIT_PASSWORD
-)
-try:
-    qb.auth_log_in()
-except qbittorrentapi.LoginFailed:
-    print("Failed to log in to qBittorrent API")
+if ENABLE_QBITTORRENT:
+
+    qb = qbittorrentapi.Client(
+        host=QBIT_HOST,
+        username=QBIT_USERNAME,
+        password=QBIT_PASSWORD
+    )
+
+    try:
+        qb.auth_log_in()
+        print("✅ Logged in to qBittorrent")
+    except qbittorrentapi.LoginFailed:
+        print("❌ Failed to log in to qBittorrent API")
+        qb = None 
+else:
+    qb = None  # qBittorrent disabled
+
 
 # =====================
 # DATABASE SETUP
