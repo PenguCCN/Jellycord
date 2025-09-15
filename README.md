@@ -71,6 +71,7 @@ Fill out values in the .env and you're good to go!
 - `!createinvite` - Create a new JFA invite link
 - `!listinvites` - List all active JFA invite links
 - `!deleteinvite <code>` - Delete a specific JFA Invite
+- `!refreshjfakey` - Refreshes the JFA API Key Forcefully
 
 ***⚙️ Admin Bot Commands***
 - `!setprefix` - Change the bots command prefix

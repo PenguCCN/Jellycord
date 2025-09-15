@@ -40,6 +40,8 @@ JELLYSEERR_API_KEY = os.getenv("JELLYSEERR_API_KEY", "")
 
 ENABLE_JFA = os.getenv("ENABLE_JFA", "False").lower() == "true"
 JFA_URL = os.getenv("JFA_URL")
+JFA_USERNAME = os.getenv("JFA_USERNAME")
+JFA_PASSWORD = os.getenv("JFA_PASSWORD")
 JFA_API_KEY = os.getenv("JFA_API_KEY")
 
 ENABLE_QBITTORRENT = os.getenv("ENABLE_QBITTORRENT", "False").lower() == "true"
@@ -357,6 +359,73 @@ def progress_bar(progress: float, length: int = 20) -> str:
     return f"[{bar}] {progress*100:.2f}%"
 
 # =====================
+# JFA-GO HELPERS
+# =====================
+
+def refresh_jfa_token() -> bool:
+    """
+    Authenticate to JFA-Go with username/password (Basic auth) against /token/login,
+    write the returned token to .env (JFA_TOKEN and JFA_API_KEY), and reload env.
+    Returns True on success.
+    """
+    global JFA_TOKEN, JFA_API_KEY
+
+    if not (JFA_URL and JFA_USERNAME and JFA_PASSWORD):
+        print("[JFA] Missing JFA_URL/JFA_USERNAME/JFA_PASSWORD in environment.")
+        return False
+
+    url = JFA_URL.rstrip("/") + "/token/login"
+    headers = {"accept": "application/json"}
+
+    try:
+        # Option A: let requests build the Basic header
+        r = requests.get(url, auth=(JFA_USERNAME, JFA_PASSWORD), headers=headers, timeout=10)
+
+        # If you prefer to build the header manually (exactly like your curl), use:
+        # creds = f"{JFA_USERNAME}:{JFA_PASSWORD}".encode()
+        # b64 = base64.b64encode(creds).decode()
+        # headers["Authorization"] = f"Basic {b64}"
+        # r = requests.get(url, headers=headers, timeout=10)
+
+        if r.status_code != 200:
+            print(f"[JFA] token login failed: {r.status_code} - {r.text}")
+            return False
+
+        data = r.json() if r.text else {}
+        # try common token fields
+        token = (
+            data.get("token")
+            or data.get("access_token")
+            or data.get("jwt")
+            or data.get("api_key")
+            or data.get("data")  # sometimes nested
+        )
+
+        # If API returns {"token": "<token>"} -> good. If it returns a wrapped structure,
+        # try to handle a couple of other shapes:
+        if not token:
+            # if response is {'success': True} or {'invites':...} then no token present
+            # print for debugging
+            print("[JFA] token not found in response JSON:", data)
+            return False
+
+        # Persist token to .env under both names (compatibility)
+        _update_env_key("JFA_TOKEN", token)
+        _update_env_key("JFA_API_KEY", token)
+
+        # Update in-memory values and reload env
+        JFA_TOKEN = token
+        JFA_API_KEY = token
+        load_dotenv(override=True)
+
+        print("[JFA] Successfully refreshed token and updated .env")
+        return True
+
+    except Exception as e:
+        print(f"[JFA] Exception while refreshing token: {e}", exc_info=True)
+        return False
+
+# =====================
 # DISCORD HELPERS
 # =====================
 
@@ -436,6 +505,26 @@ def create_trial_jellyfin_user(username, password):
     else:
         print(f"[Jellyfin] Trial user creation failed. Status: {response.status_code}, Response: {response.text}")
         return None
+    
+def _update_env_key(key: str, value: str, env_path: str = ".env"):
+    """Update or append key=value in .env (keeps file order)."""
+    lines = []
+    found = False
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        for line in lines:
+            if line.strip().startswith(f"{key}="):
+                f.write(f"{key}={value}\n")
+                found = True
+            else:
+                f.write(line)
+        if not found:
+            f.write(f"{key}={value}\n")
 
 
 # =====================
@@ -758,6 +847,27 @@ async def clearinvites(ctx):
     except Exception as e:
         await ctx.send(f"❌ Error clearing invites: {e}")
         print(f"[clearinvites] Error: {e}", exc_info=True)
+
+
+@bot.command()
+async def refreshjfakey(ctx):
+    """Admin-only: Force refresh the JFA-Go API key using username/password auth."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    if not ENABLE_JFA:
+        await ctx.send("⚠️ JFA-Go integration is disabled in the configuration.")
+        return
+
+    await ctx.send("🔁 Attempting to refresh JFA token...")
+    success = refresh_jfa_token()
+    if success:
+        await ctx.send("✅ Successfully refreshed the JFA-Go API token and updated `.env`")
+        log_event(f"Admin {ctx.author} forced a JFA API Token refresh")
+    else:
+        await ctx.send("❌ Failed to refresh the JFA-Go API token. Check bot logs for details.")
+        log_event(f"Admin {ctx.author} attempted JFA API Token refresh but failed")
 
 
 @bot.command()
@@ -1418,7 +1528,8 @@ async def help_command(ctx):
         jfa_cmds = [
             f"`{PREFIX}createinvite` - Create a new JFA invite link",
             f"`{PREFIX}listinvites` - List all active JFA invite links",
-            f"`{PREFIX}deleteinvite <code>` - Delete a specific JFA invite"
+            f"`{PREFIX}deleteinvite <code>` - Delete a specific JFA invite",
+            f"`{PREFIX}refreshjfakey` - Refreshes the JFA API Key Forcefully"
         ]
         embed.add_field(name="🔑 JFA Commands", value="\n".join(jfa_cmds), inline=False)
 
@@ -1570,6 +1681,30 @@ async def cleanup_task():
         except Exception as e:
             print(f"[Cleanup] Failed to send removed message to sync channel: {e}")
 
+# =====================
+# JFA-Go Scheduled Token Refresh
+# =====================
+if ENABLE_JFA:
+
+    @tasks.loop(hours=18)
+    async def refresh_jfa_loop():
+        success = refresh_jfa_token()
+        if success:
+            log_event("[JFA] Successfully refreshed token (scheduled loop).")
+        else:
+            log_event("[JFA] Failed to refresh token (scheduled loop).")
+
+    @refresh_jfa_loop.before_loop
+    async def before_refresh_jfa_loop():
+        await bot.wait_until_ready()
+        log_event("[JFA] Token refresh loop waiting until bot is ready.")
+
+    # Start the loop inside on_ready to ensure event loop exists
+    @bot.event
+    async def on_ready():
+        if not refresh_jfa_loop.is_running():
+            refresh_jfa_loop.start()
+        log_event(f"Bot is ready. Logged in as {bot.user}")
 
 @tasks.loop(hours=1)
 async def check_for_updates():
@@ -1614,6 +1749,9 @@ async def on_ready():
     # Start scheduled tasks
     if not cleanup_task.is_running():
         cleanup_task.start()
+
+    if not refresh_jfa_loop.is_running():
+            refresh_jfa_loop.start()
 
     if not check_for_updates.is_running():
         check_for_updates.start()

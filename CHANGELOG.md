@@ -1,3 +1,7 @@
+# 1.0.7
+
+- Fixed JFA-GO API keys expiring. The bot now schedules a key refresh
+
 # 1.0.6
 
 - Added Progress bar to Active Streams
