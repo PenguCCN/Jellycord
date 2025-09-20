@@ -1,6 +1,7 @@
 # 1.0.7
 
 - Fixed JFA-GO API keys expiring. The bot now schedules a key refresh
+- Added Proxmox support for checking storage pool size
 
 # 1.0.6
 

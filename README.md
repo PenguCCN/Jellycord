@@ -66,6 +66,9 @@ Fill out values in the .env and you're good to go!
 ***💾 qBittorrent Commands***
 - `!qbview` - View current qBittorrent downloads
 
+***🗳️ Proxmox Commands***
+- `!storage` - Show available storage pools and free space
+
 ***🔑 JFA Commands***
 
 - `!createinvite` - Create a new JFA invite link

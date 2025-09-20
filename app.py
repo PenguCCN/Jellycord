@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import pytz
 import random
 import qbittorrentapi
+from proxmoxer import ProxmoxAPI
 
 # =====================
 # ENV + VALIDATION
@@ -48,6 +49,12 @@ ENABLE_QBITTORRENT = os.getenv("ENABLE_QBITTORRENT", "False").lower() == "true"
 QBIT_HOST = os.getenv("QBIT_HOST")
 QBIT_USERNAME = os.getenv("QBIT_USERNAME")
 QBIT_PASSWORD = os.getenv("QBIT_PASSWORD")
+
+ENABLE_PROXMOX = os.getenv("ENABLE_PROXMOX", "False").lower() == "true"
+PROXMOX_HOST = os.getenv("PROXMOX_HOST")
+PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME")
+PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE")
+PROXMOX_VERIFY_SSL = os.getenv("PROXMOX_VERIFY_SSL", "False").lower() == "true"
 
 DB_HOST = get_env_var("DB_HOST")
 DB_USER = get_env_var("DB_USER")
@@ -357,6 +364,42 @@ def progress_bar(progress: float, length: int = 20) -> str:
     filled_length = int(length * progress)
     bar = '█' * filled_length + '░' * (length - filled_length)
     return f"[{bar}] {progress*100:.2f}%"
+
+# =====================
+# PROXMOX HELPERS
+# =====================
+
+def get_proxmox_client():
+    """Create and return a Proxmox client using API token auth."""
+    if not (PROXMOX_HOST and PROXMOX_TOKEN_NAME and PROXMOX_TOKEN_VALUE):
+        raise ValueError("Proxmox API credentials are not fully configured in .env")
+
+    # Parse host + port safely
+    base_host = PROXMOX_HOST.replace("https://", "").replace("http://", "")
+    if ":" in base_host:
+        host, port = base_host.split(":")
+    else:
+        host, port = base_host, 8006  # default Proxmox port
+
+    # Split token into user + token name
+    try:
+        user, token_name = PROXMOX_TOKEN_NAME.split("!")
+    except ValueError:
+        raise ValueError(
+            "❌ PROXMOX_TOKEN_NAME must be in the format 'user@realm!tokenid'"
+        )
+
+    log_event(f"[Proxmox] Connecting to {host}:{port} as {user} with token '{token_name}'")
+
+    return ProxmoxAPI(
+        host,
+        port=int(port),
+        user=user,
+        token_name=token_name,
+        token_value=PROXMOX_TOKEN_VALUE,
+        verify_ssl=PROXMOX_VERIFY_SSL
+    )
+
 
 # =====================
 # JFA-GO HELPERS
@@ -1344,6 +1387,71 @@ async def qbview(ctx):
 
 
 @bot.command()
+async def storage(ctx):
+    """Check Proxmox storage pools and ZFS pools."""
+    if not ENABLE_PROXMOX:
+        await ctx.send("⚠️ Proxmox integration is disabled in the configuration.")
+        return
+
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        proxmox = get_proxmox_client()
+        embed = discord.Embed(
+            title="📦 Proxmox Storage",
+            description="Storage pool usage and ZFS pools",
+            color=discord.Color.green()
+        )
+
+        for node in proxmox.nodes.get():
+            node_name = node["node"]
+
+            # ---- ZFS ----
+            try:
+                zfs_pools = proxmox.nodes(node_name).disks.zfs.get()
+                if zfs_pools:
+                    zfs_info = [
+                        f"**{p['name']}**: {p['alloc']/1024**3:.2f} GiB / "
+                        f"{p['size']/1024**3:.2f} GiB ({(p['alloc']/p['size']*100):.1f}%)"
+                        for p in zfs_pools
+                    ]
+                else:
+                    zfs_info = ["No ZFS pools found"]
+            except Exception as e:
+                zfs_info = [f"⚠️ Failed to fetch ZFS pools ({e})"]
+
+            embed.add_field(
+                name=f"🖥️ {node_name} - ZFS Pools",
+                value="\n".join(zfs_info),
+                inline=False
+            )
+
+            # ---- Normal storage (skip ZFS) ----
+            try:
+                storage_info = proxmox.nodes(node_name).storage.get()
+                normal_lines = [
+                    f"**{s['storage']}**: {s['used']/1024**3:.2f} GiB / "
+                    f"{s['total']/1024**3:.2f} GiB ({(s['used']/s['total']*100):.1f}%)"
+                    for s in storage_info
+                    if s.get("type", "").lower() not in ("zfspool", "zfs")
+                ]
+            except Exception as e:
+                normal_lines = [f"⚠️ Failed to fetch normal storage ({e})"]
+
+            embed.add_field(
+                name=f"🗳️ {node_name} - Normal Storage",
+                value="\n".join(normal_lines) or "No non‑ZFS storage found",
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"⚠️ Unexpected error: {e}")
+
+
+@bot.command()
 async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js_id: str = None):
     log_event(f"link invoked by {ctx.author}")
     usage_args = ["<Jellyfin Account>", "<@user>"]
@@ -1522,6 +1630,13 @@ async def help_command(ctx):
             f"`{PREFIX}qbview` - Show current qBittorrent downloads with progress, peers, and seeders",
         ]
         embed.add_field(name="💾 qBittorrent Commands", value="\n".join(qb_cmds), inline=False)
+        
+    # --- Proxmox Commands ---
+    if ENABLE_PROXMOX:
+        qb_cmds = [
+            f"`{PREFIX}storage` - Show available storage pools and free space",
+        ]
+        embed.add_field(name="🗳️ Proxmox Commands", value="\n".join(qb_cmds), inline=False)
 
     # --- JFA Commands ---
     if ENABLE_JFA:
@@ -1686,7 +1801,7 @@ async def cleanup_task():
 # =====================
 if ENABLE_JFA:
 
-    @tasks.loop(hours=18)
+    @tasks.loop(hours=1)
     async def refresh_jfa_loop():
         success = refresh_jfa_token()
         if success:
