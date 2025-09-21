@@ -2,6 +2,8 @@
 
 - Fixed JFA-GO API keys expiring. The bot now schedules a key refresh
 - Added Proxmox support for checking storage pool size
+- !what2watch is now !movies2watch
+- Added !shows2watch, now pulls 5 random shows
 
 # 1.0.6
 

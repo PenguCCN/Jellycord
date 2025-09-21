@@ -49,7 +49,8 @@ Fill out values in the .env and you're good to go!
 - `!recoveraccount` <username> <newpassword> - Reset your password
 - `!deleteaccount` <username> - Delete your Jellyfin account
 - `!trialaccount` <username> <password> - Create a 24-hour trial Jellyfin account. Only if ENABLE_TRIAL_ACCOUNTS=True
-- `!what2watch` - Lists 5 random movie suggestions from the Jellyfin Library
+- `!movies2watch` - Lists 5 random movie suggestions from the Jellyfin Library
+- `!shows2watch` - Lists 5 random show suggestions from the Jellyfin Library
 - `!help` - Displays help command
 
 ***🛠️ Admin Commands***

@@ -63,7 +63,7 @@ DB_NAME = get_env_var("DB_NAME")
 
 LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "America/Chicago")
 
-BOT_VERSION = "1.0.6"
+BOT_VERSION = "1.0.7"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 
@@ -299,6 +299,32 @@ def reset_jellyfin_password(username: str, new_password: str) -> bool:
     response = requests.post(f"{JELLYFIN_URL}/Users/{user_id}/Password", headers=headers, json=data)
     return response.status_code in (200, 204)
 
+def create_trial_jellyfin_user(username, password):
+    payload = {
+        "Name": username,
+        "Password": password,
+        "Policy": {
+            "EnableDownloads": False,
+            "EnableSyncTranscoding": False,
+            "EnableRemoteControlOfOtherUsers": False,
+            "EnableLiveTvAccess": False,
+            "IsAdministrator": False,
+            "IsHidden": False,
+            "IsDisabled": False
+        }
+    }
+    headers = {
+        "X-Emby-Token": JELLYFIN_API_KEY,
+        "Content-Type": "application/json"
+    }
+    response = requests.post(f"{JELLYFIN_URL}/Users/New", json=payload, headers=headers)
+
+    if response.status_code == 200:
+        return response.json().get("Id")
+    else:
+        print(f"[Jellyfin] Trial user creation failed. Status: {response.status_code}, Response: {response.text}")
+        return None
+
 # =====================
 # JELLYSEERR HELPERS
 # =====================
@@ -522,32 +548,6 @@ def get_metadata(key):
     cur.close()
     conn.close()
     return row[0] if row else None
-
-def create_trial_jellyfin_user(username, password):
-    payload = {
-        "Name": username,
-        "Password": password,
-        "Policy": {
-            "EnableDownloads": False,
-            "EnableSyncTranscoding": False,
-            "EnableRemoteControlOfOtherUsers": False,
-            "EnableLiveTvAccess": False,
-            "IsAdministrator": False,
-            "IsHidden": False,
-            "IsDisabled": False
-        }
-    }
-    headers = {
-        "X-Emby-Token": JELLYFIN_API_KEY,
-        "Content-Type": "application/json"
-    }
-    response = requests.post(f"{JELLYFIN_URL}/Users/New", json=payload, headers=headers)
-
-    if response.status_code == 200:
-        return response.json().get("Id")
-    else:
-        print(f"[Jellyfin] Trial user creation failed. Status: {response.status_code}, Response: {response.text}")
-        return None
     
 def _update_env_key(key: str, value: str, env_path: str = ".env"):
     """Update or append key=value in .env (keeps file order)."""
@@ -1049,8 +1049,9 @@ async def deleteaccount(ctx, username: str = None):
         await ctx.send(f"❌ Failed to delete Jellyfin account **{username}**.")
 
 @bot.command()
-async def what2watch(ctx):
-    """Pick 5 random movies from the Jellyfin library with embeds and posters."""
+async def movies2watch(ctx):
+    log_event(f"movies2watch invoked by {ctx.author}")
+    """Pick 5 random movies from the Jellyfin library with embeds, and IMDb links."""
     member = ctx.guild.get_member(ctx.author.id) if ctx.guild else None
     if not member or not has_required_role(member):
         await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role to use this command.")
@@ -1058,8 +1059,17 @@ async def what2watch(ctx):
 
     headers = {"X-Emby-Token": JELLYFIN_API_KEY}
     try:
-        # Fetch all movies
-        r = requests.get(f"{JELLYFIN_URL}/Items?IncludeItemTypes=Movie&Recursive=true", headers=headers, timeout=10)
+        # Fetch all movies (include ProviderIds explicitly!)
+        r = requests.get(
+            f"{JELLYFIN_URL}/Items",
+            headers=headers,
+            params={
+                "IncludeItemTypes": "Movie",
+                "Recursive": "true",
+                "Fields": "ProviderIds"
+            },
+            timeout=10
+        )
         if r.status_code != 200:
             await ctx.send(f"❌ Failed to fetch movies. Status code: {r.status_code}")
             return
@@ -1079,27 +1089,98 @@ async def what2watch(ctx):
         )
 
         for movie in selection:
-            name = movie.get("Name")
+            name = movie.get("Name", "Unknown Title")
             year = movie.get("ProductionYear", "N/A")
             runtime = movie.get("RunTimeTicks", None)
             runtime_min = int(runtime / 10_000_000 / 60) if runtime else "N/A"
-            
+
             # Poster URL if available
             poster_url = None
             if "PrimaryImageTag" in movie and movie["PrimaryImageTag"]:
                 poster_url = f"{JELLYFIN_URL}/Items/{movie['Id']}/Images/Primary?tag={movie['PrimaryImageTag']}&quality=90"
 
-            field_value = f"Year: {year}\nRuntime: {runtime_min} min"
+            # IMDb link if available
+            imdb_id = movie.get("ProviderIds", {}).get("Imdb")
+            imdb_link = f"[IMDb Link](https://www.imdb.com/title/{imdb_id})" if imdb_id else "No IMDb ID available"
+
+            # Field content
+            field_value = f"Year: {year}\nRuntime: {runtime_min} min\n{imdb_link}"
             embed.add_field(name=name, value=field_value, inline=False)
-            
+
             if poster_url:
-                embed.set_image(url=poster_url)  # Only last movie's poster will appear as main embed image
+                embed.set_image(url=poster_url)  # Only the last poster appears as main embed image
 
         await ctx.send(embed=embed)
 
     except Exception as e:
         await ctx.send(f"❌ Error fetching movies: {e}")
         print(f"[what2watch] Error: {e}")
+
+@bot.command()
+async def shows2watch(ctx):
+    log_event(f"shows2watch invoked by {ctx.author}")
+    """Pick 5 random TV shows from the Jellyfin library with embeds, and IMDb links."""
+    member = ctx.guild.get_member(ctx.author.id) if ctx.guild else None
+    if not member or not has_required_role(member):
+        await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role to use this command.")
+        return
+
+    headers = {"X-Emby-Token": JELLYFIN_API_KEY}
+    try:
+        # Fetch all shows (include ProviderIds explicitly!)
+        r = requests.get(
+            f"{JELLYFIN_URL}/Items",
+            headers=headers,
+            params={
+                "IncludeItemTypes": "Series",
+                "Recursive": "true",
+                "Fields": "ProviderIds"
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            await ctx.send(f"❌ Failed to fetch shows. Status code: {r.status_code}")
+            return
+
+        shows = r.json().get("Items", [])
+        if not shows:
+            await ctx.send("⚠️ No shows found in the library.")
+            return
+
+        # Pick 5 random shows
+        selection = random.sample(shows, min(5, len(shows)))
+
+        embed = discord.Embed(
+            title="📺 Shows to Watch",
+            description="Here are 5 random TV show suggestions from the library:",
+            color=discord.Color.green()
+        )
+
+        for show in selection:
+            name = show.get("Name", "Unknown Title")
+            year = show.get("ProductionYear", "N/A")
+
+            # Poster URL if available
+            poster_url = None
+            if "PrimaryImageTag" in show and show["PrimaryImageTag"]:
+                poster_url = f"{JELLYFIN_URL}/Items/{show['Id']}/Images/Primary?tag={show['PrimaryImageTag']}&quality=90"
+
+            # IMDb link if available
+            imdb_id = show.get("ProviderIds", {}).get("Imdb")
+            imdb_link = f"[IMDb Link](https://www.imdb.com/title/{imdb_id})" if imdb_id else "No IMDb ID available"
+
+            # Field content
+            field_value = f"Year: {year}\n{imdb_link}"
+            embed.add_field(name=name, value=field_value, inline=False)
+
+            if poster_url:
+                embed.set_image(url=poster_url)  # Only the last show's poster will appear as the embed image
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching shows: {e}")
+        print(f"[shows2watch] Error: {e}")
 
 
 @bot.command()
@@ -1591,7 +1672,8 @@ async def help_command(ctx):
         f"`{PREFIX}createaccount <username> <password>` - Create your Jellyfin account",
         f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
         f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account",
-        f"`{PREFIX}what2watch` - Lists 5 random movie suggestions from the Jellyfin Library"
+        f"`{PREFIX}movies2watch` - Lists 5 random movie suggestions from the Jellyfin Library",
+        f"`{PREFIX}shows2watch` - Lists 5 random show suggestions from the Jellyfin Library"
     ]
     if ENABLE_TRIAL_ACCOUNTS:
         user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a 24-hour trial Jellyfin account")
