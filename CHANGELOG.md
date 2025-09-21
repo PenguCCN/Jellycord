@@ -1,3 +1,7 @@
+# 1.0.8
+
+- Fixed update message
+
 # 1.0.7
 
 - Fixed JFA-GO API keys expiring. The bot now schedules a key refresh

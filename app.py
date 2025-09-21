@@ -1915,7 +1915,7 @@ async def check_for_updates():
                     await log_channel.send(
                         f"📌 Current version: `{BOT_VERSION}`\n"
                         f"⬆️ Latest version: `{latest_version}`\n"
-                        f"⚠️ **Update available for Jellyfin Bot! Get it here:**\n\n"
+                        f"⚠️ **Update available for Jellycord! Get it here:**\n\n"
                         f"{RELEASES_URL}"
                     )
                     log_event(f"Latest Version:'{latest_version}', Current Version: '{BOT_VERSION}'")
