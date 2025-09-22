@@ -3,6 +3,7 @@
 - Fixed update message
 - Added changelog command
 - Fixed schedule loop for Jfa being enabled when JFA support is disabled
+- Added metrics tracking for a Jellyfin container/vm in proxmox
 
 # 1.0.7
 

@@ -55,6 +55,9 @@ PROXMOX_HOST = os.getenv("PROXMOX_HOST")
 PROXMOX_TOKEN_NAME = os.getenv("PROXMOX_TOKEN_NAME")
 PROXMOX_TOKEN_VALUE = os.getenv("PROXMOX_TOKEN_VALUE")
 PROXMOX_VERIFY_SSL = os.getenv("PROXMOX_VERIFY_SSL", "False").lower() == "true"
+PROXMOX_NODE = os.getenv("PROXMOX_NODE", "pve")
+PROXMOX_VM_ID = os.getenv("PROXMOX_VM_ID", None)
+PROXMOX_TYPE = os.getenv("PROXMOX_TYPE", "qemu")
 
 DB_HOST = get_env_var("DB_HOST")
 DB_USER = get_env_var("DB_USER")
@@ -1469,6 +1472,65 @@ async def qbview(ctx):
 
 
 @bot.command()
+async def metrics(ctx):
+    """Check performance metrics for the configured Proxmox VM/Container."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+    
+    if not PROXMOX_VM_ID:
+        await ctx.send("⚠️ No Proxmox VM/Container ID is set in the .env file.")
+        return
+
+    headers = {
+        "Authorization": f"PVEAPIToken={PROXMOX_TOKEN_NAME}={PROXMOX_TOKEN_VALUE}"
+    }
+
+    try:
+        url = f"{PROXMOX_HOST}/api2/json/nodes/{PROXMOX_NODE}/{PROXMOX_TYPE}/{PROXMOX_VM_ID}/status/current"
+        r = requests.get(url, headers=headers, verify=False, timeout=10)
+
+        if r.status_code != 200:
+            await ctx.send(f"❌ Failed to fetch VM/Container status (status {r.status_code})")
+            return
+
+        data = r.json().get("data", {})
+
+        # Extract metrics
+        name = data.get("name", f"ID {PROXMOX_VM_ID}")
+        status = data.get("status", "unknown").capitalize()
+        cpu = round(data.get("cpu", 0) * 100, 2)  # returns fraction, convert to %
+        maxmem = data.get("maxmem", 1)
+        mem = data.get("mem", 0)
+        mem_usage = round((mem / maxmem) * 100, 2) if maxmem > 0 else 0
+        maxdisk = data.get("maxdisk", 1)
+        disk = data.get("disk", 0)
+        disk_usage = round((disk / maxdisk) * 100, 2) if maxdisk > 0 else 0
+        maxswap = data.get("maxswap", 1)
+        swap = data.get("swap", 0)
+        swap_usage = round((swap / maxswap) * 100, 2) if maxswap > 0 else 0
+        uptime = data.get("uptime", 0)
+
+        # Build embed
+        embed = discord.Embed(
+            title=f"📊 Proxmox Status: {name}",
+            color=discord.Color.green() if status == "Running" else discord.Color.red()
+        )
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="CPU Usage", value=f"{cpu} %", inline=True)
+        embed.add_field(name="Memory Usage", value=f"{mem_usage} %", inline=True)
+        embed.add_field(name="Disk Usage", value=f"{disk_usage} %", inline=True)
+        embed.add_field(name="Swap Usage", value=f"{swap_usage} %", inline=True)
+        embed.add_field(name="Uptime", value=f"{uptime // 3600}h {(uptime % 3600) // 60}m", inline=True)
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching Proxmox VM/Container status: {e}")
+        print(f"[proxmoxstatus] Error: {e}")
+
+
+@bot.command()
 async def storage(ctx):
     """Check Proxmox storage pools and ZFS pools."""
     if not ENABLE_PROXMOX:
@@ -1770,6 +1832,7 @@ async def help_command(ctx):
     if ENABLE_PROXMOX:
         qb_cmds = [
             f"`{PREFIX}storage` - Show available storage pools and free space",
+            f"`{PREFIX}metrics` - Show Jellyfin container metrics"
         ]
         embed.add_field(name="🗳️ Proxmox Commands", value="\n".join(qb_cmds), inline=False)
 
