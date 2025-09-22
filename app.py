@@ -1850,6 +1850,7 @@ async def help_command(ctx):
         admin_bot_cmds = [
             f"`{PREFIX}setprefix` - Change the bot's command prefix",
             f"`{PREFIX}updates` - Manually check for bot updates",
+            f"`{PREFIX}changelog` - View changelog for current bot version",
             f"`{PREFIX}logging` - Enable/disable console event logging"
         ]
         embed.add_field(name="⚙️ Admin Bot Commands", value="\n".join(admin_bot_cmds), inline=False)

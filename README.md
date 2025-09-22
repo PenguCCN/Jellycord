@@ -45,6 +45,7 @@ Fill out values in the .env and you're good to go!
 ![image](https://cdn.pengucc.com/images/projects/jellycord/readme/role-required.png)
 
 ***🎬 User Commands***
+
 - `!createaccount` <username> <password> - Create your Jellyfin account
 - `!recoveraccount` <username> <newpassword> - Reset your password
 - `!deleteaccount` <username> - Delete your Jellyfin account
@@ -54,6 +55,7 @@ Fill out values in the .env and you're good to go!
 - `!help` - Displays help command
 
 ***🛠️ Admin Commands***
+
 - `!link` <jellyfin_username> @user - Manually link accounts
 - `!unlink` @user - Manually unlink accounts
 - `!listvalidusers` - Show number of valid and invalid accounts
@@ -65,10 +67,13 @@ Fill out values in the .env and you're good to go!
 - `!activestreams` - View all Active Jellyfin streams
 
 ***💾 qBittorrent Commands***
+
 - `!qbview` - View current qBittorrent downloads
 
 ***🗳️ Proxmox Commands***
+
 - `!storage` - Show available storage pools and free space
+- `!metrics` - Show Jellyfin container metrics
 
 ***🔑 JFA Commands***
 
@@ -78,6 +83,8 @@ Fill out values in the .env and you're good to go!
 - `!refreshjfakey` - Refreshes the JFA API Key Forcefully
 
 ***⚙️ Admin Bot Commands***
+
 - `!setprefix` - Change the bots command prefix
 - `!updates` - Manually check for bot updates
+- `!changelog` - View changelog for current bot version
 - `!logging` - Enable/Disable Console Event Logging
