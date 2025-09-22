@@ -66,6 +66,7 @@ LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "Americ
 BOT_VERSION = "1.0.7"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
+CHANGELOG_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/refs/heads/main/CHANGELOG.md"
 
 # =====================
 # EVENT LOGGING
@@ -1621,6 +1622,58 @@ async def updates(ctx):
     except Exception as e:
         await ctx.send(f"❌ Error checking version: {e}")
 
+
+@bot.command()
+async def changelog(ctx):
+    log_event(f"changelog invoked by {ctx.author}")
+    """Fetch and display the changelog for the current bot version."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+    
+    try:
+        r = requests.get(CHANGELOG_URL, timeout=10)
+        if r.status_code != 200:
+            await ctx.send(f"❌ Failed to fetch changelog (status {r.status_code})")
+            return
+
+        changelog_text = r.text
+
+        # Find the section for the current version
+        search_str = f"# {BOT_VERSION}"
+        start_idx = changelog_text.find(search_str)
+        if start_idx == -1:
+            await ctx.send(f"⚠️ No changelog found for version `{BOT_VERSION}`.")
+            return
+
+        # Find the next heading or end of file
+        next_idx = changelog_text.find("# ", start_idx + len(search_str))
+        if next_idx == -1:
+            section = changelog_text[start_idx:].strip()
+        else:
+            section = changelog_text[start_idx:next_idx].strip()
+
+        # Clean the section (remove the "# version" line itself)
+        lines = section.splitlines()
+        if lines and lines[0].startswith("# "):
+            lines = lines[1:]
+        section_content = "\n".join(lines).strip()
+
+        if not section_content:
+            section_content = "⚠️ No details provided for this version."
+
+        embed = discord.Embed(
+            title=f"📜 Changelog for v{BOT_VERSION}",
+            description=section_content,
+            color=discord.Color.purple()
+        )
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching changelog: {e}")
+        print(f"[changelog] Error: {e}")
+
+
 @bot.command()
 async def logging(ctx, state: str):
     """Admin-only: Enable or disable event logging."""
@@ -1947,8 +2000,9 @@ async def on_ready():
     if not cleanup_task.is_running():
         cleanup_task.start()
 
-    if not refresh_jfa_loop.is_running():
-            refresh_jfa_loop.start()
+    if ENABLE_JFA:
+        if not refresh_jfa_loop.is_running():
+                refresh_jfa_loop.start()
 
     if not check_for_updates.is_running():
         check_for_updates.start()

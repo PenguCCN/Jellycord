@@ -1,6 +1,8 @@
 # 1.0.8
 
 - Fixed update message
+- Added changelog command
+- Fixed schedule loop for Jfa being enabled when JFA support is disabled
 
 # 1.0.7
 
