@@ -58,7 +58,7 @@ Fill out values in the .env and you're good to go!
 
 - `!link` <jellyfin_username> @user - Manually link accounts
 - `!unlink` @user - Manually unlink accounts
-- `!listvalidusers` - Show number of valid and invalid accounts
+- `!validusers` - Show number of valid and invalid accounts
 - `!cleanup` - Remove Jellyfin accounts from users without roles
 - `!lastcleanup` - See Last cleanup time, and time remaining before next cleanup
 - `!searchaccount` <jellyfin_username> - Find linked Discord user

@@ -1,3 +1,7 @@
+# 1.0.9
+
+- You can now configure trial account duration
+
 # 1.0.8
 
 - Fixed update message

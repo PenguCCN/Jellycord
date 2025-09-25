@@ -34,6 +34,7 @@ SYNC_LOG_CHANNEL_ID = get_env_var("SYNC_LOG_CHANNEL_ID", int)
 JELLYFIN_URL = get_env_var("JELLYFIN_URL")
 JELLYFIN_API_KEY = get_env_var("JELLYFIN_API_KEY")
 ENABLE_TRIAL_ACCOUNTS = os.getenv("ENABLE_TRIAL_ACCOUNTS", "False").lower() == "true"
+TRIAL_TIME = int(os.getenv("TRIAL_TIME", 24))
 
 JELLYSEERR_ENABLED = os.getenv("JELLYSEERR_ENABLED", "false").lower() == "true"
 JELLYSEERR_URL = os.getenv("JELLYSEERR_URL", "").rstrip("/")
@@ -919,7 +920,7 @@ async def refreshjfakey(ctx):
 
 @bot.command()
 async def trialaccount(ctx, username: str = None, password: str = None):
-    """Create a 24-hour trial Jellyfin account. DM-only, one-time per user."""
+    f"""Create a {TRIAL_TIME}-hour trial Jellyfin account. DM-only, one-time per user."""
     log_event(f"trialaccount invoked by {ctx.author}")
 
     # Ensure trial accounts are enabled
@@ -987,7 +988,7 @@ async def trialaccount(ctx, username: str = None, password: str = None):
         cur.close()
         conn.close()
 
-        await ctx.send(f"✅ Trial Jellyfin account **{username}** created! It will expire in 24 hours.\n🌐 Login here: {JELLYFIN_URL}")
+        await ctx.send(f"✅ Trial Jellyfin account **{username}** created! It will expire in {TRIAL_TIME} hours.\n🌐 Login here: {JELLYFIN_URL}")
         log_event(f"Trial account created for {ctx.author} ({username})")
     else:
         cur.close()
@@ -1223,7 +1224,7 @@ async def cleanup(ctx):
     await ctx.send("✅ Cleanup complete.")
 
 @bot.command()
-async def listvalidusers(ctx):
+async def validusers(ctx):
     """Admin-only: List how many registered users have a valid role."""
     if not has_admin_role(ctx.author):
         await ctx.send("❌ You don’t have permission to use this command.")
@@ -1791,7 +1792,7 @@ async def help_command(ctx):
         f"`{PREFIX}shows2watch` - Lists 5 random show suggestions from the Jellyfin Library"
     ]
     if ENABLE_TRIAL_ACCOUNTS:
-        user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a 24-hour trial Jellyfin account")
+        user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a {TRIAL_TIME}-hour trial Jellyfin account")
     
     embed.add_field(name="🎬 Jellyfin Commands", value="\n".join(user_cmds), inline=False)
 
@@ -1811,7 +1812,7 @@ async def help_command(ctx):
         admin_cmds = [
             link_command,
             f"`{PREFIX}unlink @user` - Manually unlink accounts",
-            f"`{PREFIX}listvalidusers` - Show number of valid and invalid accounts",
+            f"`{PREFIX}validusers` - Show number of valid and invalid accounts",
             f"`{PREFIX}cleanup` - Remove Jellyfin accounts from users without roles",
             f"`{PREFIX}lastcleanup` - See last cleanup time and time remaining",
             f"`{PREFIX}searchaccount <jellyfin_username>` - Find linked Discord user",
@@ -1938,7 +1939,7 @@ async def cleanup_task():
             else:
                 created_at_local = created_at_utc.astimezone(LOCAL_TZ)
 
-            if now_local > created_at_local + datetime.timedelta(hours=24):
+            if now_local > created_at_local + datetime.timedelta(hours=TRIAL_TIME):
                 # Delete trial Jellyfin user
                 try:
                     delete_jellyfin_user(trial.get("jellyfin_username"))
