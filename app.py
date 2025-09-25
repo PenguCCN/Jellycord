@@ -1597,9 +1597,9 @@ async def storage(ctx):
 
 
 @bot.command()
-async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js_id: str = None):
+async def link(ctx, user: discord.User = None, jellyfin_username: str = None, js_id: str = None):
     log_event(f"link invoked by {ctx.author}")
-    usage_args = ["<Jellyfin Account>", "<@user>"]
+    usage_args = ["<@user>", "<Jellyfin Account>"]
     if JELLYSEERR_ENABLED: usage_args.append("<Jellyseerr ID>")
 
     if jellyfin_username is None or user is None or (JELLYSEERR_ENABLED and js_id is None):
@@ -1617,7 +1617,7 @@ async def link(ctx, jellyfin_username: str = None, user: discord.User = None, js
         return
 
     add_account(user.id, jellyfin_username, jf_id, js_id)
-    await ctx.send(f"✅ Linked Jellyfin account **{jellyfin_username}** to {user.mention}.")
+    await ctx.send(f"✅ Linked {user.mention} to Jellyfin account **{jellyfin_username}**.")
 
 
 @bot.command()
@@ -1805,9 +1805,9 @@ async def help_command(ctx):
     # --- Admin Commands ---
     if is_admin:
         # Admin Jellyfin commands
-        link_command = f"`{PREFIX}link <jellyfin_username> @user` - Manually link accounts"
+        link_command = f"`{PREFIX}link @user <jellyfin_username>` - Manually link accounts"
         if JELLYSEERR_ENABLED:
-            link_command = f"`{PREFIX}link <jellyfin_username> @user <Jellyseerr ID>` - Link accounts with Jellyseerr"
+            link_command = f"`{PREFIX}link @user <jellyfin_username> <Jellyseerr ID>` - Link accounts with Jellyseerr"
 
         admin_cmds = [
             link_command,

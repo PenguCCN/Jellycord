@@ -56,7 +56,7 @@ Fill out values in the .env and you're good to go!
 
 ***🛠️ Admin Commands***
 
-- `!link` <jellyfin_username> @user - Manually link accounts
+- `!link` @user <jellyfin_username> - Manually link accounts
 - `!unlink` @user - Manually unlink accounts
 - `!validusers` - Show number of valid and invalid accounts
 - `!cleanup` - Remove Jellyfin accounts from users without roles

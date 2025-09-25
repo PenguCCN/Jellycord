@@ -1,6 +1,7 @@
 # 1.0.9
 
 - You can now configure trial account duration
+- Reformatted link command
 
 # 1.0.8
 
