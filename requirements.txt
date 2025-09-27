@@ -6,3 +6,4 @@ pytz==2025.2
 apscheduler==3.11.0
 qbittorrent-api==2025.7.0
 proxmoxer==2.2.0
+pymysql==1.1.2

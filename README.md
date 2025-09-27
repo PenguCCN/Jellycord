@@ -85,6 +85,10 @@ Fill out values in the .env and you're good to go!
 ***⚙️ Admin Bot Commands***
 
 - `!setprefix` - Change the bots command prefix
-- `!updates` - Manually check for bot updates
+- `!update` - Download latest bot version
+- `!backup` - Create a backup of the bot and configurations
+- `!backups` - List backups of the bot
+- `!restore` - Restore a backup of the bot
+- `!version` - Manually check for bot updates
 - `!changelog` - View changelog for current bot version
 - `!logging` - Enable/Disable Console Event Logging

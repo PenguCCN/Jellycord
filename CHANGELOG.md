@@ -2,6 +2,9 @@
 
 - You can now configure trial account duration
 - Reformatted link command
+- Added Updating via command
+- Added Backup command
+- Added restore command
 
 # 1.0.8
 

@@ -9,6 +9,15 @@ import pytz
 import random
 import qbittorrentapi
 from proxmoxer import ProxmoxAPI
+import subprocess
+import sys
+import zipfile
+import io
+import time
+from pathlib import Path
+import tempfile
+import shutil
+import pymysql
 
 # =====================
 # ENV + VALIDATION
@@ -66,8 +75,11 @@ DB_PASSWORD = get_env_var("DB_PASSWORD")
 DB_NAME = get_env_var("DB_NAME")
 
 LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "America/Chicago")
+ENV_FILE = ".env"
+DEFAULT_ENV_FILE = ".env.example"
+BACKUP_DIR = Path("backups")
 
-BOT_VERSION = "1.0.8"
+BOT_VERSION = "1.0.9"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 CHANGELOG_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/refs/heads/main/CHANGELOG.md"
@@ -573,6 +585,91 @@ def _update_env_key(key: str, value: str, env_path: str = ".env"):
                 f.write(line)
         if not found:
             f.write(f"{key}={value}\n")
+
+def export_mysql_db(dump_file):
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+        cursor = conn.cursor()
+
+        with open(dump_file, "w", encoding="utf-8") as f:
+            # Get tables
+            cursor.execute("SHOW TABLES")
+            tables = [row[0] for row in cursor.fetchall()]
+
+            for table in tables:
+                # Dump CREATE statement
+                cursor.execute(f"SHOW CREATE TABLE `{table}`")
+                create_stmt = cursor.fetchone()[1]
+                f.write(f"-- Table structure for `{table}`\n{create_stmt};\n\n")
+
+                # Dump rows
+                cursor.execute(f"SELECT * FROM `{table}`")
+                rows = cursor.fetchall()
+                if rows:
+                    columns = [desc[0] for desc in cursor.description]
+                    for row in rows:
+                        values = ", ".join(
+                            f"'{str(val).replace("'", "''")}'" if val is not None else "NULL"
+                            for val in row
+                        )
+                        f.write(f"INSERT INTO `{table}` ({', '.join(columns)}) VALUES ({values});\n")
+                f.write("\n")
+
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[Backup] Database export failed: {e}")
+        return False
+
+def sync_env_file():
+    """Ensure .env has all fields from .env.example, preserving existing values."""
+    if not os.path.exists(DEFAULT_ENV_FILE):
+        print("[updatebot] No .env.example found, skipping env sync")
+        return
+
+    # Load .env.example as baseline
+    with open(DEFAULT_ENV_FILE, "r") as f:
+        default_lines = [line.strip("\n") for line in f.readlines()]
+
+    # Load existing .env (create if missing)
+    existing = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "r") as f:
+            for line in f:
+                if "=" in line and not line.strip().startswith("#"):
+                    key, val = line.split("=", 1)
+                    existing[key.strip()] = val.strip()
+
+    # Build new env content
+    new_lines = []
+    for line in default_lines:
+        if "=" not in line:  # comments or blank lines
+            new_lines.append(line)
+            continue
+
+        key, default_val = line.split("=", 1)
+        key = key.strip()
+        if key in existing:
+            new_lines.append(f"{key}={existing[key]}")
+        else:
+            new_lines.append(line)  # use default if missing
+
+    # Write back updated .env
+    with open(ENV_FILE, "w") as f:
+        f.write("\n".join(new_lines) + "\n")
+
+    print("[updatebot] Synced .env file successfully")
+
+
+def restart_bot():
+    """Replace current process with a new one."""
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 # =====================
@@ -1668,7 +1765,247 @@ async def setprefix(ctx, new_prefix: str = None):
 
 
 @bot.command()
-async def updates(ctx):
+async def update(ctx):
+    """Admin-only: Check GitHub version, sync .env, and pull latest bot code."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    try:
+        # Fetch latest version
+        version_url = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
+        r = requests.get(version_url, timeout=10)
+        if r.status_code != 200:
+            await ctx.send("❌ Failed to fetch latest version info.")
+            return
+
+        latest_version = r.text.strip()
+        if latest_version == BOT_VERSION:
+            await ctx.send(f"✅ Bot is already up-to-date (`{BOT_VERSION}`).")
+            return
+
+        await ctx.send(f"⬆️ Update found: `{BOT_VERSION}` → `{latest_version}`")
+
+        # Download release zip
+        releases_url = "https://github.com/PenguCCN/Jellycord/releases/latest/download/Jellycord.zip"
+        r = requests.get(releases_url, timeout=30)
+        if r.status_code != 200:
+            await ctx.send("❌ Failed to download latest release zip.")
+            return
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            z.extractall("update_tmp")
+
+        # Merge .env with .env.example
+        env_path = ".env"
+        example_path = os.path.join("update_tmp", ".env.example")
+
+        if os.path.exists(example_path):
+            # Load current env into dict
+            current_env = {}
+            if os.path.exists(env_path):
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if "=" in line and not line.strip().startswith("#"):
+                            key, val = line.split("=", 1)
+                            current_env[key.strip()] = val.strip()
+
+            merged_lines = []
+            with open(example_path, "r") as f:
+                for line in f:
+                    if line.strip().startswith("#") or "=" not in line:
+                        # Keep comments & blank lines exactly as they are
+                        merged_lines.append(line.rstrip("\n"))
+                    else:
+                        key, default_val = line.split("=", 1)
+                        key = key.strip()
+                        if key in current_env:
+                            merged_lines.append(f"{key}={current_env[key]}")
+                        else:
+                            merged_lines.append(line.rstrip("\n"))
+
+            with open(env_path, "w") as f:
+                f.write("\n".join(merged_lines) + "\n")
+
+        # Overwrite all other bot files
+        for root, dirs, files in os.walk("update_tmp"):
+            for file in files:
+                if file == ".env.example":
+                    continue
+                src = os.path.join(root, file)
+                dst = os.path.relpath(src, "update_tmp")
+                os.replace(src, dst)
+
+        await ctx.send(f"✅ Update applied! Now running version `{latest_version}`.\n⚠️ Restart the bot to load changes.")
+        restart_bot()
+
+    except Exception as e:
+        await ctx.send(f"❌ Update failed: {e}")
+        print(f"[updatebot] Error: {e}")
+
+
+@bot.command()
+async def backup(ctx):
+    """Create a backup of the bot (files + DB)."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    await ctx.send("📦 Starting backup process...")
+
+    try:
+        BACKUP_DIR.mkdir(exist_ok=True)
+
+        # Backup filename
+        today = datetime.datetime.now().strftime("%m-%d-%Y")
+        backup_name = f"{today}-{BOT_VERSION}.zip"
+        backup_path = BACKUP_DIR / backup_name
+
+        # Temporary SQL dump file
+        dump_file = BACKUP_DIR / f"{DB_NAME}.sql"
+        if not export_mysql_db(dump_file):
+            await ctx.send("⚠️ Database export failed, continuing without DB dump...")
+
+        with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as backup_zip:
+            # Add all files in current directory (skip backups themselves)
+            for root, _, files in os.walk("."):
+                if root.startswith("./backups"):
+                    continue
+                for file in files:
+                    file_path = Path(root) / file
+                    backup_zip.write(file_path, arcname=file_path.relative_to("."))
+
+            # Add DB dump if created
+            if dump_file.exists():
+                backup_zip.write(dump_file, arcname=f"{DB_NAME}.sql")
+                dump_file.unlink()  # remove temporary dump file
+
+        await ctx.send(f"✅ Backup created: `{backup_name}`")
+        log_event(f"Backup created: {backup_name}")
+
+    except Exception as e:
+        await ctx.send(f"❌ Backup failed: {e}")
+        print(f"[Backup] Error: {e}")
+
+@bot.command()
+async def restore(ctx, backup_file: str):
+    """Restore a backup (files + database) from a zip. Admin only."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    backup_path = os.path.join("backups", backup_file)
+    if not os.path.exists(backup_path):
+        await ctx.send(f"❌ Backup `{backup_file}` not found.")
+        return
+
+    await ctx.send(f"♻️ Starting restore from `{backup_file}`. This may take a while...")
+
+    temp_dir = os.path.join("backups", "restore_temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    try:
+        # --- Extract zip to local restore_temp folder ---
+        with zipfile.ZipFile(backup_path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        # --- Database Restore ---
+        sql_files = [f for f in os.listdir(temp_dir) if f.endswith(".sql")]
+        if sql_files:
+            sql_file_path = os.path.join(temp_dir, sql_files[0])
+            with open(sql_file_path, "r", encoding="utf-8") as f:
+                sql_content = f.read()
+
+            conn = pymysql.connect(
+                host=os.getenv("DB_HOST", "localhost"),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                database=os.getenv("DB_NAME"),
+                autocommit=True
+            )
+            with conn.cursor() as cursor:
+                cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE();")
+                tables = cursor.fetchall()
+                for (table_name,) in tables:
+                    cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`;")
+                cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
+
+                for statement in sql_content.split(";"):
+                    stmt = statement.strip()
+                    if stmt:
+                        cursor.execute(stmt)
+            conn.close()
+            await ctx.send("✅ Database restored successfully!")
+        else:
+            await ctx.send("⚠️ No SQL backup found in this zip file.")
+
+        # --- Copy files to working directory ---
+        for item in os.listdir(temp_dir):
+            src_path = os.path.join(temp_dir, item)
+            dest_path = os.path.join(".", item)
+            if os.path.isdir(src_path):
+                if os.path.exists(dest_path):
+                    shutil.rmtree(dest_path)
+                shutil.copytree(src_path, dest_path)
+            else:
+                shutil.copy2(src_path, dest_path)
+
+        await ctx.send("✅ Files restored successfully!")
+
+    except Exception as e:
+        await ctx.send(f"❌ Restore failed: {e}")
+        return
+
+    finally:
+        # --- Clean up restore_temp folder ---
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    await ctx.send("🔃 Restarting bot to apply changes...")
+    restart_bot()
+
+
+@bot.command()
+async def backups(ctx):
+    """List all available backups in the backups directory (newest to oldest)."""
+    if not has_admin_role(ctx.author):
+        await ctx.send("❌ You don’t have permission to use this command.")
+        return
+
+    backup_folder = Path("backups")
+    if not backup_folder.exists():
+        await ctx.send("⚠️ No backups folder found.")
+        return
+
+    # Collect all zip files in backups dir
+    backups = list(backup_folder.glob("*.zip"))
+    if not backups:
+        await ctx.send("⚠️ No backups found.")
+        return
+
+    # Sort by modification time, newest first
+    backups.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+    embed = discord.Embed(
+        title="📂 Available Backups",
+        description="Newest to oldest backups:",
+        color=discord.Color.green()
+    )
+
+    for backup in backups:
+        mtime = backup.stat().st_mtime
+        formatted_time = f"<t:{int(mtime)}:f>"  # Discord timestamp formatting
+        embed.add_field(
+            name=backup.name,
+            value=f"Created: {formatted_time}",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def version(ctx):
     log_event(f"updates invoked by {ctx.author}")
     member = ctx.guild.get_member(ctx.author.id)
     if not has_admin_role(ctx.author):
@@ -1850,7 +2187,11 @@ async def help_command(ctx):
         # Admin Bot commands
         admin_bot_cmds = [
             f"`{PREFIX}setprefix` - Change the bot's command prefix",
-            f"`{PREFIX}updates` - Manually check for bot updates",
+            f"`{PREFIX}update` - Download latest bot version",
+            f"`{PREFIX}backup` - Create a backup of the bot, its database and configurations",
+            f"`{PREFIX}backups` - List backups of the bot",
+            f"`{PREFIX}restore` - Restore a backup of the bot",
+            f"`{PREFIX}version` - Manually check for bot updates",
             f"`{PREFIX}changelog` - View changelog for current bot version",
             f"`{PREFIX}logging` - Enable/disable console event logging"
         ]
