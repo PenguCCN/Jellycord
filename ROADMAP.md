@@ -1,6 +1,7 @@
 - **Future Features**
 
     - Servarr Support
+    - Make Jellyfin admins exempt from account cleanup
 
 - **To Do**
 
