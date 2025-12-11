@@ -2369,6 +2369,11 @@ async def periodic_post_task():
             print(f"[POST LOOP] No endpoint for: {feature}")
             continue
 
+        # Skip POST if the feature is disabled (0)
+        if not enabled:
+            print(f"[POST LOOP] Skipping {feature} because it's disabled.")
+            continue
+
         payload = build_payload(enabled)
 
         try:
