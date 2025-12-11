@@ -1,6 +1,11 @@
 # Jellycord
 
 ![image](https://cdn.pengucc.com/images/projects/jellycord/readme/BannerRound.png)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dinstance&style=for-the-badge&logo=nodedotjs&logoColor=white&label=Bot%20Instances&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Djellyseerr&style=for-the-badge&logo=jellyfin&logoColor=white&label=Jellyseer%20Enabled&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dproxmox&style=for-the-badge&logo=proxmox&logoColor=white&label=Proxmox%20Enabled&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Djfa&style=for-the-badge&logo=go&logoColor=white&label=JFA-GO%20Enabled&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dqbittorrent&style=for-the-badge&logo=qbittorrent&logoColor=white&label=qBittorrent%20Enabled&color=9964c5)
 
 [![Online Members](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscordapp.com%2Fapi%2Finvites%2FEdPJAhrDq8%3Fwith_counts%3Dtrue&query=approximate_presence_count&style=for-the-badge&logo=discord&logoColor=white&label=ONLINE%20MEMBERS&labelColor=grey&color=239eda)](https://discord.gg/EdPJAhrDq8)
 ![Latest Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FPenguCCN%2FJellycord%2Fmain%2Fversion.json&query=%24.version&style=for-the-badge&logo=python&logoColor=white&label=Latest%20Version%3A&color=239eda)
@@ -13,7 +18,24 @@ This is a very simple and lightweight Jellyfin Discord bot for managing users. I
 
 Fill out values in the .env and you're good to go!
 
-## Features
+# 🛑 Disclaimer (Please Read) 🛑
+
+This bot collects limited amounts of information, it is enabled by default and can be disabled in your environment file. Information Collected is limited to:
+
+- Bot Instances
+- Enabled Features
+
+We do **not** and will **never** collect nor store:
+
+- IP Address's.
+- System Information.
+- Information about Jellyfin or any related services.
+
+## Why do we do this?
+
+Adding these simply allows me to see what features users are interested in, allowing me to focus on improving/fixing highly used features.
+
+# Features
 
 - Automatic Account Cleanup
 - Creating Accounts
@@ -24,7 +46,7 @@ Fill out values in the .env and you're good to go!
 - Change bot prefix live
 - Checks for new releases
 
-## Command Overview
+# Command Overview
 
 **Pinging the bot will show you the necessary commands to create your account.**
 

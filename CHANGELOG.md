@@ -1,3 +1,7 @@
+# 1.1.0
+
+- The bot now sends limited info stats to a public frontend for development insight. (Reports enabled features and bot instance only | Jellyseerr, Proxmox, JFA, qBittorrent)
+
 # 1.0.9
 
 - You can now configure trial account duration

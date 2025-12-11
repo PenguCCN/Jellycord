@@ -18,6 +18,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import pymysql
+import json
 
 # =====================
 # ENV + VALIDATION
@@ -83,6 +84,15 @@ BOT_VERSION = "1.0.9"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 CHANGELOG_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/refs/heads/main/CHANGELOG.md"
+
+TRACKING_ENABLED = os.getenv("TRACKING_ENABLED", "False").lower() == "true"
+POST_ENDPOINTS = {
+    "botinstance": "https://jellycordstats.pengucc.com/api/instance",
+    "jellyseerr": "https://jellycordstats.pengucc.com/api/jellyseerr",
+    "proxmox": "https://jellycordstats.pengucc.com/api/proxmox",
+    "jfa": "https://jellycordstats.pengucc.com/api/jfa",
+    "qbittorrent": "https://jellycordstats.pengucc.com/api/qbittorrent"
+}
 
 # =====================
 # EVENT LOGGING
@@ -284,6 +294,7 @@ def delete_account(discord_id):
 # =====================
 # JELLYFIN HELPERS
 # =====================
+
 def create_jellyfin_user(username, password):
     headers = {"X-Emby-Token": JELLYFIN_API_KEY}
     data = {"Name": username, "Password": password}
@@ -671,6 +682,8 @@ def restart_bot():
     """Replace current process with a new one."""
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+def build_payload(enabled: bool):
+    return {"value": 1 if enabled else 0}
 
 # =====================
 # EVENTS
@@ -2337,6 +2350,33 @@ async def cleanup_task():
         except Exception as e:
             print(f"[Cleanup] Failed to send removed message to sync channel: {e}")
 
+@tasks.loop(seconds=15)
+async def periodic_post_task():
+    if not TRACKING_ENABLED:
+        return
+
+    features = {
+        "botinstance": TRACKING_ENABLED,
+        "jellyseerr": JELLYSEERR_ENABLED,
+        "proxmox": ENABLE_PROXMOX,
+        "jfa": ENABLE_JFA,
+        "qbittorrent": ENABLE_QBITTORRENT
+    }
+
+    for feature, enabled in features.items():
+        url = POST_ENDPOINTS.get(feature)
+        if not url:
+            print(f"[POST LOOP] No endpoint for: {feature}")
+            continue
+
+        payload = build_payload(enabled)
+
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            print(f"[POST LOOP] Sent {feature} → {response.status_code} | Payload: {payload}")
+        except Exception as e:
+            print(f"[POST LOOP] Error sending POST for {feature}: {e}")
+
 # =====================
 # JFA-Go Scheduled Token Refresh
 # =====================
@@ -2412,6 +2452,12 @@ async def on_ready():
 
     if not check_for_updates.is_running():
         check_for_updates.start()
+
+    if TRACKING_ENABLED:
+        print("Tracking enabled — starting.")
+        periodic_post_task.start()
+    else:
+        print("Tracking disabled via .env")
 
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name=f"{PREFIX}help")
