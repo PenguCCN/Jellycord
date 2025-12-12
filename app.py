@@ -19,6 +19,8 @@ import tempfile
 import shutil
 import pymysql
 import json
+import psutil
+import platform
 
 # =====================
 # ENV + VALIDATION
@@ -94,6 +96,7 @@ RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 CHANGELOG_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/refs/heads/main/CHANGELOG.md"
 
 TRACKING_ENABLED = os.getenv("TRACKING_ENABLED", "False").lower() == "true"
+PROMETHEUS_URL = "https://prometheus.pengucc.com/api/v1/query"
 POST_ENDPOINTS = {
     "botinstance": "https://jellycordstats.pengucc.com/api/instance",
     "jellyseerr": "https://jellycordstats.pengucc.com/api/jellyseerr",
@@ -769,6 +772,22 @@ def restart_bot():
 
 def build_payload(enabled: bool):
     return {"value": 1 if enabled else 0}
+
+def promql(query: str):
+    """Run a PromQL query and return results."""
+
+    try:
+        response = requests.get(
+            PROMETHEUS_URL,
+            params={"query": query},
+            timeout=10
+        )
+        data = response.json()
+        result = data.get("data", {}).get("result", [])
+        return result
+    except Exception as e:
+        print(f"[Prometheus] Error: {e}")
+        return None
 
 # =====================
 # EVENTS
@@ -1924,6 +1943,103 @@ async def unlink(ctx, discord_user: discord.User = None):
     delete_account(discord_user.id)
     await ctx.send(f"✅ Unlinked Jellyfin account **{account[0]}** from Discord user {discord_user.mention}.")
 
+@bot.command()
+async def stats(ctx):
+    """Show unified system and Prometheus metrics in one compact embed."""
+
+    # -------------------
+    # Local System Stats
+    # -------------------
+
+    cpu_usage = psutil.cpu_percent(interval=1)
+
+    mem = psutil.virtual_memory()
+    mem_str = f"{round(mem.used/1024**3,2)} / {round(mem.total/1024**3,2)} GB ({mem.percent}%)"
+
+    disk = psutil.disk_usage('/')
+    disk_str = f"{round(disk.used/1024**3,2)} / {round(disk.total/1024**3,2)} GB ({disk.percent}%)"
+
+    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+    uptime = datetime.datetime.now() - boot_time
+    uptime_str = str(uptime).split('.')[0]
+
+    python_version = platform.python_version()
+    bot_ver = BOT_VERSION if "BOT_VERSION" in globals() else "Unknown"
+
+
+    # -------------------
+    # Prometheus Stats (Last 5 Minutes)
+    # -------------------
+
+    prometheus_fields = []
+
+    if PROMETHEUS_URL:
+
+        metrics = {
+            "Instances": 
+                "max_over_time(instance[5m])",
+
+            "Jellyseerr Enabled": 
+                "max_over_time(jellyseerr[5m])",
+
+            "JFA Enabled": 
+                "max_over_time(jfa[5m])",
+
+            "qBittorrent Enabled": 
+                "max_over_time(qbittorrent[5m])",
+
+            "Radarr Enabled": 
+                "max_over_time(radarr[5m])",
+
+            "Sonarr Enabled": 
+                "max_over_time(sonarr[5m])"
+        }
+
+        for label, query in metrics.items():
+            result = promql(query)
+            if result and isinstance(result, list) and len(result) > 0:
+                try:
+                    value = result[0]["value"][1]
+                except:
+                    value = "N/A"
+            else:
+                value = "N/A"
+
+            prometheus_fields.append((label, value))
+
+
+    # -------------------
+    # Build Embed
+    # -------------------
+
+    embed = discord.Embed(
+        title="📊 Jellycord System & Tracking Statistics",
+        color=discord.Color.blurple()
+    )
+
+    # Local stats
+    embed.add_field(name="🧠 CPU", value=f"{cpu_usage}%", inline=True)
+    embed.add_field(name="💾 Memory", value=mem_str, inline=True)
+    embed.add_field(name="📀 Disk", value=disk_str, inline=True)
+    embed.add_field(name="⏱️ Uptime", value=uptime_str, inline=True)
+    embed.add_field(name="🐍 Python", value=python_version, inline=True)
+    embed.add_field(name="🤖 Bot Version", value=bot_ver, inline=True)
+
+    # Prometheus stats
+    if prometheus_fields:
+        embed.add_field(name="📡 Tracking (Last 5 Minutes)", value="\u200b", inline=False)
+        for label, val in prometheus_fields:
+            embed.add_field(name=f"• {label}", value=f"`{val}`", inline=True)
+    else:
+        embed.add_field(
+            name="📡 Tracking",
+            value="Prometheus disabled or unreachable",
+            inline=False
+        )
+
+    embed.set_footer(text=f"Generated • {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def setprefix(ctx, new_prefix: str = None):
@@ -2380,6 +2496,7 @@ async def help_command(ctx):
 
         # Admin Bot commands
         admin_bot_cmds = [
+            f"`{PREFIX}stats` - View Local and Global Jellycord Stats",
             f"`{PREFIX}setprefix` - Change the bot's command prefix",
             f"`{PREFIX}update` - Download latest bot version",
             f"`{PREFIX}backup` - Create a backup of the bot, its database and configurations",

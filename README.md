@@ -6,6 +6,8 @@
 ![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dproxmox&style=for-the-badge&logo=proxmox&logoColor=white&label=Proxmox%20Enabled&color=9964c5)
 ![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Djfa&style=for-the-badge&logo=go&logoColor=white&label=JFA-GO%20Enabled&color=9964c5)
 ![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dqbittorrent&style=for-the-badge&logo=qbittorrent&logoColor=white&label=qBittorrent%20Enabled&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dradarr&style=for-the-badge&logo=radarr&logoColor=white&label=Radarr%20Enabled&color=9964c5)
+![Live Player Count](https://img.shields.io/badge/dynamic/json?query=$.data.result[0].value[1]&url=https%3A%2F%2Fprometheus.pengucc.com%2Fapi%2Fv1%2Fquery%3Fquery%3Dsonarr&style=for-the-badge&logo=sonarr&logoColor=white&label=Sonarr%20Enabled&color=9964c5)
 
 [![Online Members](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscordapp.com%2Fapi%2Finvites%2FEdPJAhrDq8%3Fwith_counts%3Dtrue&query=approximate_presence_count&style=for-the-badge&logo=discord&logoColor=white&label=ONLINE%20MEMBERS&labelColor=grey&color=239eda)](https://discord.gg/EdPJAhrDq8)
 ![Latest Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FPenguCCN%2FJellycord%2Fmain%2Fversion.json&query=%24.version&style=for-the-badge&logo=python&logoColor=white&label=Latest%20Version%3A&color=239eda)
@@ -107,6 +109,7 @@ Adding these simply allows me to see what features users are interested in, allo
 ***⚙️ Admin Bot Commands***
 
 - `!setprefix` - Change the bots command prefix
+- `!stats` - View Local and Global Jellycord Stats
 - `!update` - Download latest bot version
 - `!backup` - Create a backup of the bot and configurations
 - `!backups` - List backups of the bot
