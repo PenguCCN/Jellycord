@@ -21,6 +21,7 @@ import pymysql
 import json
 import psutil
 import platform
+import logging
 
 # =====================
 # ENV + VALIDATION
@@ -89,6 +90,11 @@ LOCAL_TZ = pytz.timezone(get_env_var("LOCAL_TZ", str, required=False) or "Americ
 ENV_FILE = ".env"
 DEFAULT_ENV_FILE = ".env.example"
 BACKUP_DIR = Path("backups")
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+LATEST_LOG = LOG_DIR / "latest.log"
+ARCHIVE_DIR = LOG_DIR / "archives"
+ARCHIVE_DIR.mkdir(exist_ok=True)
 
 BOT_VERSION = "1.0.9"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
@@ -254,6 +260,14 @@ def init_trial_accounts_table():
     cur.close()
     conn.close()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LATEST_LOG, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
 def get_accounts():
     conn = mysql.connector.connect(
@@ -2647,6 +2661,49 @@ async def cleanup_task():
                 await log_channel.send(msg)
         except Exception as e:
             print(f"[Cleanup] Failed to send removed message to sync channel: {e}")
+
+@tasks.loop(hours=24)
+async def rotate_logs():
+    try:
+        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        # =====================
+        # 1. Ensure latest.log exists
+        # =====================
+        if not LATEST_LOG.exists():
+            LATEST_LOG.touch()
+
+        # =====================
+        # 2. Archive the latest.log
+        # =====================
+        archive_name = ARCHIVE_DIR / f"log_{now}.zip"
+
+        with zipfile.ZipFile(archive_name, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(LATEST_LOG, arcname="latest.log")
+
+        print(f"[LOG ROTATE] Archived log to: {archive_name}")
+
+        # =====================
+        # 3. Delete oldest archives if more than 4 exist
+        # =====================
+        archives = sorted(ARCHIVE_DIR.glob("*.zip"), key=os.path.getmtime)
+
+        if len(archives) > 4:
+            to_delete = archives[: len(archives) - 4]
+            for old in to_delete:
+                old.unlink()
+                print(f"[LOG ROTATE] Deleted old archive: {old}")
+
+        # =====================
+        # 4. Clear latest.log for new logs
+        # =====================
+        with open(LATEST_LOG, "w", encoding="utf-8"):
+            pass
+
+        print("[LOG ROTATE] Reset latest.log")
+
+    except Exception as e:
+        print(f"[ERROR] Log rotation failed: {e}")
 
 @tasks.loop(seconds=15)
 async def periodic_post_task():
