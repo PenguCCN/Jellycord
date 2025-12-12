@@ -56,6 +56,14 @@ JFA_USERNAME = os.getenv("JFA_USERNAME")
 JFA_PASSWORD = os.getenv("JFA_PASSWORD")
 JFA_API_KEY = os.getenv("JFA_API_KEY")
 
+ENABLE_RADARR = os.getenv("ENABLE_RADARR", "false").lower() == "true"
+RADARR_URL = os.getenv("RADARR_URL", "").rstrip("/")
+RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
+
+ENABLE_SONARR = os.getenv("ENABLE_SONARR", "false").lower() == "true"
+SONARR_URL = os.getenv("SONARR_URL", "").rstrip("/")
+SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
+
 ENABLE_QBITTORRENT = os.getenv("ENABLE_QBITTORRENT", "False").lower() == "true"
 QBIT_HOST = os.getenv("QBIT_HOST")
 QBIT_USERNAME = os.getenv("QBIT_USERNAME")
@@ -91,7 +99,9 @@ POST_ENDPOINTS = {
     "jellyseerr": "https://jellycordstats.pengucc.com/api/jellyseerr",
     "proxmox": "https://jellycordstats.pengucc.com/api/proxmox",
     "jfa": "https://jellycordstats.pengucc.com/api/jfa",
-    "qbittorrent": "https://jellycordstats.pengucc.com/api/qbittorrent"
+    "qbittorrent": "https://jellycordstats.pengucc.com/api/qbittorrent",
+    "radarr": "https://jellycordstats.pengucc.com/api/radarr",
+    "sonarr": "https://jellycordstats.pengucc.com/api/sonarr"
 }
 
 # =====================
@@ -408,6 +418,81 @@ def delete_jellyseerr_user(js_id: str) -> bool:
     except Exception as e:
         print(f"[Jellyseerr] Failed to delete user {js_id}: {e}")
         return False
+    
+# =====================
+# SERVARR HELPERS
+# =====================
+
+def radarr_get_movies():
+    """Return a list of all movies Radarr is managing."""
+    if not ENABLE_RADARR:
+        return None
+
+    try:
+        response = requests.get(
+            f"{RADARR_URL}/api/v3/movie",
+            headers={"X-Api-Key": RADARR_API_KEY},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"[Radarr] Error fetching movies: {response.status_code} {response.text}")
+            return None
+
+        return response.json()
+    except Exception as e:
+        print(f"[Radarr] Exception: {e}")
+        return None
+    
+def radarr_get_latest_movies(count=5):
+    """Return the latest added movies from Radarr."""
+    movies = radarr_get_movies()
+    if not movies:
+        return None
+
+    # Sort by 'added' field if available
+    sorted_movies = sorted(
+        movies,
+        key=lambda m: m.get("added", ""),
+        reverse=True
+    )
+
+    return sorted_movies[:count]
+    
+def sonarr_get_series():
+    """Return a list of all series Sonarr is managing."""
+    if not ENABLE_SONARR:
+        return None
+
+    try:
+        response = requests.get(
+            f"{SONARR_URL}/api/v3/series",
+            headers={"X-Api-Key": SONARR_API_KEY},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"[Sonarr] Error fetching series: {response.status_code} {response.text}")
+            return None
+
+        return response.json()
+
+    except Exception as e:
+        print(f"[Sonarr] Exception: {e}")
+        return None
+    
+def sonarr_get_latest_series(count=5):
+    """Return the latest added series from Sonarr."""
+    series = sonarr_get_series()
+    if not series:
+        return None
+
+    # Sonarr tracks `added` timestamps too
+    sorted_series = sorted(
+        series,
+        key=lambda s: s.get("added", ""),
+        reverse=True
+    )
+
+    return sorted_series[:count]
     
 # =====================
 # QBITTORRENT HELPERS
@@ -1527,6 +1612,100 @@ async def activestreams(ctx):
         print(f"[activestreams] Error: {e}")
 
 @bot.command()
+async def moviestats(ctx):
+    """Show Radarr's latest 5 added movies with total count."""
+    if not ENABLE_RADARR:
+        await ctx.send("⚠️ Radarr support is not enabled.")
+        return
+
+    movies = radarr_get_movies()
+    if movies is None:
+        await ctx.send("❌ Failed to connect to Radarr.")
+        return
+
+    total_count = len(movies)
+
+    # Sort by newest "added"
+    latest = sorted(
+        movies,
+        key=lambda m: m.get("added", ""),
+        reverse=True
+    )[:5]
+
+    embed = discord.Embed(
+        title="🎞️ Latest Radarr Additions",
+        color=discord.Color.orange()
+    )
+
+    for movie in latest:
+        title = movie.get("title", "Unknown")
+        year = movie.get("year", "Unknown")
+        added = movie.get("added", "Unknown")
+        tmdb_id = movie.get("tmdbId")
+
+        tmdb_link = (
+            f"https://www.themoviedb.org/movie/{tmdb_id}"
+            if tmdb_id else "No TMDB ID"
+        )
+
+        embed.add_field(
+            name=f"{title} ({year})",
+            value=f"📅 Added: `{added}`\n🔗 {tmdb_link}",
+            inline=False
+        )
+
+    embed.set_footer(text=f"Total movies managed by Radarr: {total_count}")
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def showstats(ctx):
+    """Show Sonarr's latest 5 added series with total count."""
+    if not ENABLE_SONARR:
+        await ctx.send("⚠️ Sonarr support is not enabled.")
+        return
+
+    series = sonarr_get_series()
+    if series is None:
+        await ctx.send("❌ Failed to connect to Sonarr.")
+        return
+
+    total_count = len(series)
+
+    # Newest first
+    latest = sorted(
+        series,
+        key=lambda s: s.get("added", ""),
+        reverse=True
+    )[:5]
+
+    embed = discord.Embed(
+        title="📺 Latest Sonarr Additions",
+        color=discord.Color.blue()
+    )
+
+    for show in latest:
+        title = show.get("title", "Unknown")
+        year = show.get("year", "Unknown")
+        added = show.get("added", "Unknown")
+        tvdb_id = show.get("tvdbId")
+
+        tvdb_link = (
+            f"https://thetvdb.com/?id={tvdb_id}&tab=series"
+            if tvdb_id else "No TVDB ID"
+        )
+
+        embed.add_field(
+            name=f"{title} ({year})",
+            value=f"📅 Added: `{added}`\n🔗 {tvdb_link}",
+            inline=False
+        )
+
+    embed.set_footer(text=f"Total series managed by Sonarr: {total_count}")
+
+    await ctx.send(embed=embed)
+
+@bot.command()
 async def qbview(ctx):
     """Admin-only: View current qBittorrent downloads."""
     if not ENABLE_QBITTORRENT:
@@ -2139,7 +2318,9 @@ async def help_command(ctx):
         f"`{PREFIX}recoveraccount <newpassword>` - Reset your password",
         f"`{PREFIX}deleteaccount <username>` - Delete your Jellyfin account",
         f"`{PREFIX}movies2watch` - Lists 5 random movie suggestions from the Jellyfin Library",
-        f"`{PREFIX}shows2watch` - Lists 5 random show suggestions from the Jellyfin Library"
+        f"`{PREFIX}shows2watch` - Lists 5 random show suggestions from the Jellyfin Library",
+        f"`{PREFIX}moviestats` - Lists latest 5 movies added, also shows total movie library size",
+        f"`{PREFIX}showstats` - Lists latest 5 movies added, also shows total series library size"
     ]
     if ENABLE_TRIAL_ACCOUNTS:
         user_cmds.append(f"`{PREFIX}trialaccount <username> <password>` - Create a {TRIAL_TIME}-hour trial Jellyfin account")
@@ -2360,7 +2541,9 @@ async def periodic_post_task():
         "jellyseerr": JELLYSEERR_ENABLED,
         "proxmox": ENABLE_PROXMOX,
         "jfa": ENABLE_JFA,
-        "qbittorrent": ENABLE_QBITTORRENT
+        "qbittorrent": ENABLE_QBITTORRENT,
+        "radarr": ENABLE_RADARR,
+        "sonarr": ENABLE_SONARR
     }
 
     for feature, enabled in features.items():
