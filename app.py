@@ -1156,16 +1156,7 @@ async def trialaccount(ctx, username: str = None, password: str = None):
         await ctx.send(command_usage(f"{PREFIX}trialaccount", ["<username>", "<password>"]))
         return
 
-    member = None
-    for gid in GUILD_IDS:
-        guild = bot.get_guild(gid)
-        if guild:
-            member = guild.get_member(ctx.author.id)
-            if member and has_required_role(member):
-                break
-
-    if not member or not has_required_role(member):
-        await ctx.send(f"❌ {ctx.author.mention}, you don’t have the required role.")
+    # No role required for trial accounts — allow any DM user when enabled.
         return
 
     # Check if user already has a normal Jellyfin account
