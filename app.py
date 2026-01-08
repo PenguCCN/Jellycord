@@ -90,7 +90,7 @@ ENV_FILE = ".env"
 DEFAULT_ENV_FILE = ".env.example"
 BACKUP_DIR = Path("backups")
 
-BOT_VERSION = "1.0.9"
+BOT_VERSION = "1.1.0"
 VERSION_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/main/version.txt"
 RELEASES_URL = "https://github.com/PenguCCN/Jellycord/releases"
 CHANGELOG_URL = "https://raw.githubusercontent.com/PenguCCN/Jellycord/refs/heads/main/CHANGELOG.md"

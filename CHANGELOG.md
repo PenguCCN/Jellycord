@@ -2,6 +2,7 @@
 
 - The bot now sends limited info stats to a public frontend for development insight. (Reports enabled features and bot instance only | Jellyseerr, Proxmox, JFA, qBittorrent)
 - Radarr & Sonarr Support
+- Removed requirement for allowed role to create a trial Jellyfin account
 
 # 1.0.9
 
